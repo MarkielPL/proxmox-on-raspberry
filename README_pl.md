@@ -1,6 +1,8 @@
+- [ ] tłumaczenie AI - sprawdzić!
+
 # PXVIRT Proxmox fork proces instalacji na Raspberry Pi <br />
 
-- [ ] tłumaczenie AI - sprawdzić!
+
 
 
 Zobacz zawarty skrypt do automatycznego uruchamiania wszystkich zadań przed instalacją. <br />
