@@ -1,0 +1,318 @@
+"""
+Konfiguracja Raspberry Pi Kiosk Dashboard.
+
+W tym pliku znajdują się wszystkie ustawienia,
+które użytkownik może zmieniać bez ingerencji
+w pozostały kod programu.
+"""
+
+from pathlib import Path
+
+# ==========================================================
+# INFORMACJE O APLIKACJI
+# ==========================================================
+
+APP_NAME = "Raspberry Pi Kiosk"
+
+APP_VERSION = "2.2"
+
+AUTHOR = "tom marki + ChatGPT"
+
+# ==========================================================
+# ŚCIEŻKI
+# ==========================================================
+
+PROJECT_DIR = Path(__file__).parent
+
+LOG_DIR = PROJECT_DIR / "logs"
+
+LOG_FILE = LOG_DIR / "dashboard.log"
+
+# ==========================================================
+# PROXMOX
+# ==========================================================
+
+PROXMOX_NODE = None
+# None = automatycznie pobierz hostname
+
+PIHOLE_CTID = 100
+
+# ==========================================================
+# ODŚWIEŻANIE
+# ==========================================================
+
+LIVE_REFRESH = 2
+
+CPU_INTERVAL = 1
+
+NETWORK_INTERVAL = 1
+
+RAM_INTERVAL = 2
+
+SYSTEM_INTERVAL = 5
+
+TEMPERATURE_INTERVAL = 5
+
+DISK_INTERVAL = 60
+
+PROXMOX_INTERVAL = 5
+
+PIHOLE_INTERVAL = 10
+
+NVME_INTERVAL = 5
+
+# ==========================================================
+# PROGI CPU
+# ==========================================================
+
+CPU_WARNING = 60
+
+CPU_CRITICAL = 85
+
+# ==========================================================
+# RAM
+# ==========================================================
+
+RAM_WARNING = 70
+
+RAM_CRITICAL = 90
+
+# ==========================================================
+# TEMPERATURY
+# ==========================================================
+
+CPU_TEMP_WARNING = 65
+
+CPU_TEMP_CRITICAL = 80
+
+NVME_TEMP_WARNING = 55
+
+NVME_TEMP_CRITICAL = 70
+
+RP1_TEMP_WARNING = 60
+
+RP1_TEMP_CRITICAL = 80
+
+# ==========================================================
+# DYSKI
+# ==========================================================
+
+DISK_WARNING = 75
+
+DISK_CRITICAL = 90
+
+# ==========================================================
+# WENTYLATOR
+# ==========================================================
+
+FAN_MIN_RPM = 500
+
+FAN_WARNING_RPM = 1500
+
+PWM_MAX = 255
+
+# ==========================================================
+# PASKI
+# ==========================================================
+
+CPU_BAR_WIDTH = 20
+
+RAM_BAR_WIDTH = 30
+
+DISK_BAR_WIDTH = 25
+
+# ==========================================================
+# KOLORY
+# ==========================================================
+
+COLOR_HEADER = "bold white on dark_blue"
+
+COLOR_CPU = "cyan"
+
+COLOR_RAM = "magenta"
+
+COLOR_NETWORK = "blue"
+
+COLOR_DISK = "green"
+
+COLOR_TEMP = "yellow"
+
+COLOR_SYSTEM = "bright_cyan"
+
+COLOR_PROXMOX = "bright_magenta"
+
+COLOR_PIHOLE = "bright_green"
+
+COLOR_FAN = "bright_blue"
+
+COLOR_OK = "green"
+
+COLOR_WARNING = "yellow"
+
+COLOR_CRITICAL = "bold red"
+
+COLOR_TEXT = "white"
+
+COLOR_DIM = "grey62"
+
+COLOR_BORDER = "grey50"
+
+# ==========================================================
+# IKONY
+# ==========================================================
+
+ICON_CPU = "🖥"
+
+ICON_RAM = "🧠"
+
+ICON_NETWORK = "🌐"
+
+ICON_DISK = "💾"
+
+ICON_TEMP = "🌡"
+
+ICON_FAN = "🌀"
+
+ICON_POWER = "⚡"
+
+ICON_CLOCK = "🕒"
+
+ICON_PIHOLE = "🛡"
+
+ICON_PROXMOX = "📦"
+
+ICON_WARNING = "⚠"
+
+ICON_OK = "✔"
+
+ICON_ERROR = "✖"
+
+# ==========================================================
+# PLIKI SYSTEMOWE
+# ==========================================================
+
+CPU_TEMP_PATH = Path(
+    "/sys/class/thermal/thermal_zone0/temp"
+)
+
+HWMON_PATH = Path(
+    "/sys/class/hwmon"
+)
+
+# ==========================================================
+# IGNOROWANE SYSTEMY PLIKÓW
+# ==========================================================
+
+IGNORED_FILESYSTEMS = {
+
+    "tmpfs",
+
+    "devtmpfs",
+
+    "proc",
+
+    "sysfs",
+
+    "cgroup",
+
+    "cgroup2",
+
+    "overlay",
+
+    "squashfs",
+
+    "tracefs",
+
+    "debugfs",
+
+    "devpts",
+
+    "mqueue",
+
+    "securityfs",
+
+}
+
+# ==========================================================
+# MAPOWANIE CZUJNIKÓW
+# ==========================================================
+
+TEMPERATURE_NAMES = {
+
+    "cpu_thermal": "CPU",
+
+    "thermal_zone0": "CPU",
+
+    "nvme": "NVMe",
+
+    "Composite": "NVMe",
+
+    "Sensor 1": "NVMe",
+
+    "rp1_adc": "RP1",
+
+    "rpi_volt": "Voltage",
+
+    "pwmfan": "Fan",
+
+}
+
+# ==========================================================
+# ALERTY
+# ==========================================================
+
+ENABLE_SOUND_ALERT = False
+
+ENABLE_POPUP_ALERT = True
+
+ENABLE_LOGGING = True
+
+# ==========================================================
+# PANEL PI-HOLE
+# ==========================================================
+
+SHOW_PIHOLE_PANEL = True
+
+SHOW_NETWORK_PANEL = True
+
+SHOW_STORAGE_PANEL = True
+
+SHOW_SYSTEM_PANEL = True
+
+SHOW_COOLING_PANEL = True
+
+SHOW_PROXMOX_PANEL = True
+
+# ==========================================================
+# PANEL DYSKÓW
+# ==========================================================
+
+SHOW_BOOT_PARTITION = True
+
+SHOW_TMPFS = False
+
+# ==========================================================
+# SIEĆ
+# ==========================================================
+
+PING_TARGET = "1.1.1.1"
+
+DNS_TEST_HOST = "google.com"
+
+# ==========================================================
+# FORMATY
+# ==========================================================
+
+TIME_FORMAT = "%H:%M:%S"
+
+DATE_FORMAT = "%Y-%m-%d"
+
+DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+# ==========================================================
+# NAGŁÓWEK
+# ==========================================================
+
+HEADER_TITLE = "Raspberry Pi 5 • Debian Trixie • Proxmox VE 9"
+
+FOOTER_TEXT = "Kiosk Dashboard"
