@@ -1,7 +1,9 @@
 """
-collectors
+Kolektory danych Raspberry Pi Kiosk Dashboard.
 
-Kolektory danych systemowych Raspberry Pi Kiosk Dashboard.
+Collectory odpowiadają wyłącznie za pobieranie
+danych ze źródeł systemowych, sieciowych
+i usługowych.
 
-Każdy collector odpowiada za jeden obszar systemu.
+Nie zawierają kodu UI.
 """

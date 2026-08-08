@@ -1,44 +1,74 @@
 """
-collectors/sensors.py
+Odczyt temperatur i czujników sprzętowych Raspberry Pi.
 
-Odczyt temperatur z:
+Moduł odpowiada wyłącznie za odczyt danych z:
 
-/sys/class/thermal
-/sys/class/hwmon
+    /sys/class/thermal
+    /sys/class/hwmon
 
-Obsługiwane są m.in.:
+Nie tworzy paneli Rich.
+Nie wykonuje formatowania tekstu.
 
-- CPU
-- NVMe
-- RP1
+Obsługiwane źródła:
+
+    cpu_thermal
+    nvme
+    rp1_adc
+    rpi_volt
+    inne czujniki udostępnione przez hwmon
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-import psutil
+from models import TemperatureInfo
+from models import TemperaturesInfo
 
 import config
 
-from models import (
-    TemperatureInfo,
-    TemperaturesInfo,
-)
-
 
 class SensorCollector:
-    """Collector temperatur."""
+    """
+    Kolektor temperatur i czujników sprzętowych.
+    """
 
-    def _read_temperature(
-        self,
+    def __init__(self) -> None:
+        self.hwmon_path = Path(
+            config.HWMON_PATH
+        )
+
+        self.thermal_path = Path(
+            "/sys/class/thermal"
+        )
+
+    # ======================================================
+    # PLIK SENSOR
+    # ======================================================
+
+    @staticmethod
+    def read_sensor_value(
         path: Path,
     ) -> float | None:
+        """
+        Odczytuje wartość czujnika.
+
+        Obsługiwane są typowe wartości hwmon
+        zapisane w:
+
+            millidegree Celsius
+
+        czyli np.:
+
+            45000 → 45.0 °C
+        """
 
         try:
 
             value = float(
-                path.read_text().strip()
+                path.read_text(
+                    encoding="utf-8"
+                ).strip()
             )
 
         except (
@@ -48,120 +78,203 @@ class SensorCollector:
 
             return None
 
-        # Linux thermal zones zwykle
-        # zwracają temperaturę w milikelwinach.
-        if value > 1000:
-            value /= 1000
+        # hwmon temperaturę podaje zwykle
+        # w tysięcznych częściach stopnia.
+        if abs(value) > 1000:
+            value /= 1000.0
 
         return value
 
     # ======================================================
-    # THERMAL
+    # HWMON NAME
     # ======================================================
 
-    def _collect_thermal_zones(
+    @staticmethod
+    def read_hwmon_name(
+        path: Path,
+    ) -> str:
+        """
+        Odczytuje nazwę urządzenia hwmon.
+        """
+
+        try:
+
+            return (
+                path.read_text(
+                    encoding="utf-8"
+                )
+                .strip()
+            )
+
+        except OSError:
+
+            return ""
+
+    # ======================================================
+    # TEMPERATURE NAME
+    # ======================================================
+
+    @staticmethod
+    def map_temperature_name(
+        hwmon_name: str,
+        sensor_label: str,
+        fallback: str,
+    ) -> str:
+        """
+        Zamienia techniczną nazwę czujnika
+        na nazwę prezentowaną w dashboardzie.
+
+        Najpierw sprawdzamy etykietę czujnika,
+        następnie nazwę urządzenia hwmon.
+        """
+
+        if sensor_label:
+
+            mapped = (
+                config.TEMPERATURE_NAMES.get(
+                    sensor_label
+                )
+            )
+
+            if mapped:
+                return mapped
+
+        if hwmon_name:
+
+            mapped = (
+                config.TEMPERATURE_NAMES.get(
+                    hwmon_name
+                )
+            )
+
+            if mapped:
+                return mapped
+
+        return fallback
+
+    # ======================================================
+    # THERMAL ZONES
+    # ======================================================
+
+    def collect_thermal_zones(
         self,
     ) -> list[TemperatureInfo]:
+        """
+        Odczytuje temperatury z:
 
-        result = []
+            /sys/class/thermal/thermal_zone*
 
-        thermal_path = Path(
-            "/sys/class/thermal"
-        )
+        """
 
-        if not thermal_path.exists():
-            return result
+        sensors: list[
+            TemperatureInfo
+        ] = []
+
+        if not self.thermal_path.exists():
+            return sensors
 
         for zone in sorted(
-            thermal_path.glob(
+            self.thermal_path.glob(
                 "thermal_zone*"
             )
         ):
 
+            temperature_file = (
+                zone / "temp"
+            )
+
+            if not temperature_file.is_file():
+                continue
+
             temperature = (
-                self._read_temperature(
-                    zone / "temp"
+                self.read_sensor_value(
+                    temperature_file
                 )
             )
 
             if temperature is None:
                 continue
 
-            zone_type = ""
-
             try:
 
                 zone_type = (
                     zone / "type"
-                ).read_text().strip()
+                ).read_text(
+                    encoding="utf-8"
+                ).strip()
 
             except OSError:
 
-                pass
+                zone_type = ""
 
             name = (
                 config.TEMPERATURE_NAMES.get(
-                    zone_type,
-                    config.TEMPERATURE_NAMES.get(
-                        zone.name,
-                        zone_type
-                        or zone.name,
-                    ),
+                    zone_type
                 )
+                or config.TEMPERATURE_NAMES.get(
+                    zone.name
+                )
+                or zone_type
+                or zone.name
             )
 
-            result.append(
+            sensors.append(
                 TemperatureInfo(
                     name=name,
+                    sensor=zone.name,
                     temperature=temperature,
-                    source=str(zone),
+                    source="thermal",
                 )
             )
 
-        return result
+        return sensors
 
     # ======================================================
     # HWMON
     # ======================================================
 
-    def _collect_hwmon(
+    def collect_hwmon(
         self,
     ) -> list[TemperatureInfo]:
+        """
+        Odczytuje temperatury z urządzeń hwmon.
 
-        result = []
+        Szukane są pliki:
 
-        hwmon_path = config.HWMON_PATH
+            temp*_input
 
-        if not hwmon_path.exists():
-            return result
+        """
+
+        sensors: list[
+            TemperatureInfo
+        ] = []
+
+        if not self.hwmon_path.exists():
+            return sensors
 
         for hwmon in sorted(
-            hwmon_path.glob("hwmon*")
+            self.hwmon_path.glob(
+                "hwmon*"
+            )
         ):
 
-            name_file = hwmon / "name"
+            if not hwmon.is_dir():
+                continue
 
-            try:
-
-                group = (
-                    name_file
-                    .read_text()
-                    .strip()
+            hwmon_name = (
+                self.read_hwmon_name(
+                    hwmon / "name"
                 )
-
-            except OSError:
-
-                continue
-
-            if group == "pwmfan":
-                continue
+            )
 
             for temp_file in sorted(
-                hwmon.glob("temp*_input")
+                hwmon.glob(
+                    "temp*_input"
+                )
             ):
 
                 temperature = (
-                    self._read_temperature(
+                    self.read_sensor_value(
                         temp_file
                     )
                 )
@@ -169,48 +282,98 @@ class SensorCollector:
                 if temperature is None:
                     continue
 
-                label_file = (
-                    temp_file.parent
-                    / (
-                        temp_file.name
-                        .replace(
-                            "_input",
-                            "_label",
-                        )
+                sensor_number = (
+                    temp_file.name
+                    .replace(
+                        "_input",
+                        "",
                     )
                 )
 
-                label = ""
+                label_file = (
+                    hwmon
+                    / f"{sensor_number}_label"
+                )
 
                 try:
 
-                    label = (
-                        label_file
-                        .read_text()
-                        .strip()
+                    sensor_label = (
+                        label_file.read_text(
+                            encoding="utf-8"
+                        ).strip()
                     )
 
                 except OSError:
 
-                    pass
+                    sensor_label = ""
 
-                sensor_name = (
-                    label
-                    or config.TEMPERATURE_NAMES.get(
-                        group,
-                        group,
+                fallback = (
+                    sensor_label
+                    or hwmon_name
+                    or sensor_number
+                )
+
+                name = (
+                    self.map_temperature_name(
+                        hwmon_name,
+                        sensor_label,
+                        fallback,
                     )
                 )
 
-                result.append(
+                sensors.append(
                     TemperatureInfo(
-                        name=sensor_name,
-                        temperature=temperature,
-                        source=str(
-                            temp_file
+                        name=name,
+                        sensor=(
+                            f"{hwmon_name}:"
+                            f"{sensor_number}"
                         ),
+                        temperature=temperature,
+                        source="hwmon",
                     )
                 )
+
+        return sensors
+
+    # ======================================================
+    # DUPLIKATY
+    # ======================================================
+
+    @staticmethod
+    def remove_duplicates(
+        sensors: list[TemperatureInfo],
+    ) -> list[TemperatureInfo]:
+        """
+        Usuwa duplikaty temperatur.
+
+        Raspberry Pi może udostępniać tę samą
+        temperaturę zarówno przez thermal_zone,
+        jak i hwmon.
+
+        Preferujemy pierwszy znaleziony odczyt.
+        """
+
+        result: list[
+            TemperatureInfo
+        ] = []
+
+        seen: set[
+            tuple[str, str]
+        ] = set()
+
+        for sensor in sensors:
+
+            key = (
+                sensor.name,
+                sensor.sensor,
+            )
+
+            if key in seen:
+                continue
+
+            seen.add(key)
+
+            result.append(sensor)
 
         return result
 
@@ -218,33 +381,80 @@ class SensorCollector:
     # COLLECT
     # ======================================================
 
-    def collect(
-        self,
-    ) -> TemperaturesInfo:
+    def collect(self) -> TemperaturesInfo:
+        """
+        Pobiera komplet temperatur.
+        """
+
+        info = TemperaturesInfo()
 
         sensors = []
 
+        # Najpierw thermal zones.
         sensors.extend(
-            self._collect_thermal_zones()
+            self.collect_thermal_zones()
         )
 
+        # Następnie hwmon.
         sensors.extend(
-            self._collect_hwmon()
+            self.collect_hwmon()
         )
 
-        # Usuwamy duplikaty po nazwie,
-        # pozostawiając ostatni odczyt.
-        unique = {}
-
-        for sensor in sensors:
-
-            unique[sensor.name] = sensor
-
-        return TemperaturesInfo(
-            sensors=list(
-                unique.values()
+        info.sensors = (
+            self.remove_duplicates(
+                sensors
             )
         )
+
+        # --------------------------------------------------
+        # Przypisanie najważniejszych temperatur
+        # do pól szybkiego dostępu.
+        # --------------------------------------------------
+
+        for sensor in info.sensors:
+
+            name = sensor.name.lower()
+
+            if (
+                name == "cpu"
+                or "cpu" in name
+            ):
+
+                if info.cpu == 0.0:
+                    info.cpu = (
+                        sensor.temperature
+                    )
+
+            elif "nvme" in name:
+
+                if info.nvme == 0.0:
+                    info.nvme = (
+                        sensor.temperature
+                    )
+
+            elif "rp1" in name:
+
+                if info.rp1 == 0.0:
+                    info.rp1 = (
+                        sensor.temperature
+                    )
+
+            elif (
+                "volt" in name
+                or "voltage" in name
+            ):
+
+                if info.voltage == 0.0:
+                    info.voltage = (
+                        sensor.temperature
+                    )
+
+        return info
+
+
+# ==========================================================
+# GLOBALNY COLLECTOR
+# ==========================================================
 
 
 sensor_collector = SensorCollector()

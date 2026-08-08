@@ -1,123 +1,230 @@
 """
-collectors/system.py
+Odczyt informacji o systemie Linux.
 
-Informacje o systemie:
+Moduł pobiera:
 
-- hostname
-- kernel
-- architektura
-- Debian
-- uptime
-- load average
+- hostname,
+- kernel,
+- system operacyjny,
+- architekturę,
+- uptime,
+- czas uruchomienia,
+- liczbę procesów,
+- load average.
+
+Nie tworzy paneli Rich.
 """
 
 from __future__ import annotations
 
 import os
 import platform
-import socket
-from pathlib import Path
+import time
+
+import psutil
 
 from models import SystemInfo
 
 
 class SystemCollector:
-    """Collector informacji systemowych."""
+    """
+    Kolektor informacji o systemie.
+    """
 
-    def _read_os_release(
-        self,
-    ) -> tuple[str, str]:
+    # ======================================================
+    # OPERATING SYSTEM
+    # ======================================================
 
-        path = Path(
-            "/etc/os-release"
-        )
+    @staticmethod
+    def operating_system() -> str:
+        """
+        Odczytuje nazwę systemu z /etc/os-release.
+        """
 
-        values = {}
+        path = "/etc/os-release"
 
         try:
 
-            for line in path.read_text().splitlines():
+            with open(
+                path,
+                "r",
+                encoding="utf-8",
+            ) as file:
 
-                if "=" not in line:
-                    continue
+                for line in file:
 
-                key, value = (
-                    line.split(
-                        "=",
-                        1,
-                    )
-                )
+                    if line.startswith(
+                        "PRETTY_NAME="
+                    ):
 
-                values[key] = (
-                    value.strip('"')
-                )
+                        return (
+                            line.split(
+                                "=",
+                                1,
+                            )[1]
+                            .strip()
+                            .strip('"')
+                        )
 
         except OSError:
 
-            return "", ""
+            pass
 
-        return (
-            values.get(
-                "PRETTY_NAME",
-                "",
-            ),
-            values.get(
-                "VERSION",
-                "",
-            ),
-        )
+        return platform.system()
 
-    def collect(
-        self,
-    ) -> SystemInfo:
+    # ======================================================
+    # UPTIME
+    # ======================================================
 
-        os_name, os_version = (
-            self._read_os_release()
-        )
+    @staticmethod
+    def uptime() -> int:
+        """
+        Zwraca uptime systemu w sekundach.
+        """
 
         try:
 
-            uptime = int(
-                float(
-                    Path(
-                        "/proc/uptime"
-                    )
-                    .read_text()
-                    .split()[0]
-                )
+            return int(
+                time.time()
+                - psutil.boot_time()
             )
 
         except (
             OSError,
             ValueError,
-            IndexError,
         ):
 
-            uptime = 0
+            return 0
+
+    # ======================================================
+    # PROCESS COUNT
+    # ======================================================
+
+    @staticmethod
+    def process_count() -> int:
+        """
+        Zwraca liczbę procesów.
+        """
 
         try:
 
-            load_1m, load_5m, load_15m = (
-                os.getloadavg()
+            return len(
+                psutil.pids()
             )
 
         except OSError:
 
-            load_1m = 0.0
-            load_5m = 0.0
-            load_15m = 0.0
+            return 0
 
-        return SystemInfo(
-            hostname=socket.gethostname(),
-            architecture=platform.machine(),
-            kernel=platform.release(),
-            os_name=os_name,
-            os_version=os_version,
-            uptime=uptime,
-            load_1m=load_1m,
-            load_5m=load_5m,
-            load_15m=load_15m,
+    # ======================================================
+    # LOAD
+    # ======================================================
+
+    @staticmethod
+    def load_average() -> tuple[
+        float,
+        float,
+        float,
+    ]:
+        """
+        Zwraca load average.
+        """
+
+        try:
+
+            return os.getloadavg()
+
+        except OSError:
+
+            return (
+                0.0,
+                0.0,
+                0.0,
+            )
+
+    # ======================================================
+    # COLLECT
+    # ======================================================
+
+    def collect(self) -> SystemInfo:
+        """
+        Pobiera komplet informacji systemowych.
+        """
+
+        info = SystemInfo()
+
+        # --------------------------------------------------
+        # Hostname
+        # --------------------------------------------------
+
+        info.hostname = (
+            platform.node()
         )
+
+        # --------------------------------------------------
+        # Kernel
+        # --------------------------------------------------
+
+        info.kernel = (
+            platform.release()
+        )
+
+        # --------------------------------------------------
+        # OS
+        # --------------------------------------------------
+
+        info.operating_system = (
+            self.operating_system()
+        )
+
+        # --------------------------------------------------
+        # Architecture
+        # --------------------------------------------------
+
+        info.architecture = (
+            platform.machine()
+        )
+
+        # --------------------------------------------------
+        # Boot time
+        # --------------------------------------------------
+
+        info.boot_time = (
+            psutil.boot_time()
+        )
+
+        # --------------------------------------------------
+        # Uptime
+        # --------------------------------------------------
+
+        info.uptime = (
+            self.uptime()
+        )
+
+        # --------------------------------------------------
+        # Process count
+        # --------------------------------------------------
+
+        info.process_count = (
+            self.process_count()
+        )
+
+        # --------------------------------------------------
+        # Load average
+        # --------------------------------------------------
+
+        (
+            info.load_1m,
+            info.load_5m,
+            info.load_15m,
+        ) = self.load_average()
+
+        return info
+
+
+# ==========================================================
+# GLOBALNY COLLECTOR
+# ==========================================================
 
 
 system_collector = SystemCollector()

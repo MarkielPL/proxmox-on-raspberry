@@ -1,38 +1,51 @@
 """
-collectors/nvme.py
-
-Monitoring dysku NVMe.
+Monitoring dysku NVMe Raspberry Pi.
 
 Źródła:
 
-/sys/class/nvme/nvme*/
+    /sys/class/nvme/
+    /sys/class/hwmon/
+
+Moduł odpowiada wyłącznie za odczyt danych.
+
+Nie tworzy paneli Rich.
+Nie wykonuje formatowania UI.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-import config
-
 from models import NvmeInfo
 
 
 class NvmeCollector:
-    """Collector NVMe."""
+    """
+    Kolektor informacji o urządzeniu NVMe.
+    """
 
     BASE_PATH = Path(
         "/sys/class/nvme"
     )
 
+    # ======================================================
+    # ODCZYT TEKSTU
+    # ======================================================
+
+    @staticmethod
     def _read_text(
-        self,
         path: Path,
     ) -> str:
+        """
+        Bezpiecznie odczytuje plik tekstowy.
+        """
 
         try:
 
             return (
-                path.read_text()
+                path.read_text(
+                    encoding="utf-8"
+                )
                 .strip()
             )
 
@@ -40,15 +53,25 @@ class NvmeCollector:
 
             return ""
 
+    # ======================================================
+    # ODCZYT LICZBY
+    # ======================================================
+
+    @staticmethod
     def _read_int(
-        self,
         path: Path,
     ) -> int:
+        """
+        Bezpiecznie odczytuje liczbę całkowitą.
+        """
 
         try:
 
             return int(
-                path.read_text().strip()
+                path.read_text(
+                    encoding="utf-8"
+                )
+                .strip()
             )
 
         except (
@@ -58,16 +81,55 @@ class NvmeCollector:
 
             return 0
 
+    # ======================================================
+    # ODCZYT FLOAT
+    # ======================================================
+
+    @staticmethod
+    def _read_float(
+        path: Path,
+    ) -> float:
+        """
+        Bezpiecznie odczytuje liczbę zmiennoprzecinkową.
+        """
+
+        try:
+
+            return float(
+                path.read_text(
+                    encoding="utf-8"
+                )
+                .strip()
+            )
+
+        except (
+            OSError,
+            ValueError,
+        ):
+
+            return 0.0
+
+    # ======================================================
+    # ZNAJDŹ NVMe
+    # ======================================================
+
     def _find_device(
         self,
     ) -> Path | None:
+        """
+        Znajduje pierwszy kontroler NVMe.
+
+        Przykład:
+
+            /sys/class/nvme/nvme0
+        """
 
         if not self.BASE_PATH.exists():
             return None
 
         devices = sorted(
             self.BASE_PATH.glob(
-                "nvme*"
+                "nvme[0-9]*"
             )
         )
 
@@ -78,9 +140,63 @@ class NvmeCollector:
 
         return None
 
+    # ======================================================
+    # TEMPERATURA
+    # ======================================================
+
+    def _get_temperature(
+        self,
+        device: Path,
+    ) -> float:
+        """
+        Próbuje znaleźć temperaturę NVMe
+        przez powiązany katalog hwmon.
+        """
+
+        hwmon_path = (
+            device / "hwmon"
+        )
+
+        if not hwmon_path.exists():
+            return 0.0
+
+        for hwmon in hwmon_path.glob(
+            "hwmon*"
+        ):
+
+            for temp_file in sorted(
+                hwmon.glob(
+                    "temp*_input"
+                )
+            ):
+
+                raw = self._read_float(
+                    temp_file
+                )
+
+                if raw == 0:
+                    continue
+
+                # hwmon podaje temperaturę
+                # najczęściej w milistopniach.
+                if abs(raw) > 1000:
+                    raw /= 1000.0
+
+                return raw
+
+        return 0.0
+
+    # ======================================================
+    # COLLECT
+    # ======================================================
+
     def collect(
         self,
     ) -> NvmeInfo:
+        """
+        Pobiera informacje o pierwszym
+        znalezionym urządzeniu NVMe.
+        """
 
         device = self._find_device()
 
@@ -90,54 +206,50 @@ class NvmeCollector:
                 available=False
             )
 
-        model = self._read_text(
+        info = NvmeInfo(
+            available=True,
+            device=device.name,
+        )
+
+        # --------------------------------------------------
+        # MODEL
+        # --------------------------------------------------
+
+        info.model = self._read_text(
             device / "model"
         )
 
-        temperature = 0.0
+        # --------------------------------------------------
+        # SERIAL
+        # --------------------------------------------------
 
-        # Próba odczytu przez hwmon.
-        hwmon = device / "hwmon"
-
-        if hwmon.exists():
-
-            for sensor_dir in hwmon.glob(
-                "hwmon*"
-            ):
-
-                for temp_file in sensor_dir.glob(
-                    "temp*_input"
-                ):
-
-                    try:
-
-                        raw = float(
-                            temp_file
-                            .read_text()
-                            .strip()
-                        )
-
-                        temperature = (
-                            raw / 1000
-                        )
-
-                        break
-
-                    except (
-                        OSError,
-                        ValueError,
-                    ):
-
-                        continue
-
-                if temperature:
-                    break
-
-        return NvmeInfo(
-            available=True,
-            model=model,
-            temperature=temperature,
+        info.serial = self._read_text(
+            device / "serial"
         )
 
+        # --------------------------------------------------
+        # FIRMWARE
+        # --------------------------------------------------
+
+        info.firmware = self._read_text(
+            device / "firmware_rev"
+        )
+
+        # --------------------------------------------------
+        # TEMPERATURA
+        # --------------------------------------------------
+
+        info.temperature = (
+            self._get_temperature(
+                device
+            )
+        )
+
+        return info
+
+
+# ==========================================================
+# GLOBALNY COLLECTOR
+# ==========================================================
 
 nvme_collector = NvmeCollector()
