@@ -1,200 +1,249 @@
 """
 collectors/sensors.py
 
-Obsługa czujników Raspberry Pi 5.
+Odczyt temperatur z:
 
-Obsługiwane urządzenia:
+/sys/class/thermal
+/sys/class/hwmon
 
-• cpu_thermal
-• nvme
-• rp1_adc
-• rpi_volt
-• pwmfan
+Obsługiwane są m.in.:
 
-Moduł automatycznie wyszukuje urządzenia hwmon
-po nazwie zamiast po numerze hwmonX.
+- CPU
+- NVMe
+- RP1
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from models import FanInfo
-from models import TemperatureInfo
+import psutil
 
-from utils import pwm_to_percent
-from utils import read_float
-from utils import read_int
-from utils import read_text
+import config
+
+from models import (
+    TemperatureInfo,
+    TemperaturesInfo,
+)
 
 
 class SensorCollector:
+    """Collector temperatur."""
 
-    HWMON_ROOT = Path("/sys/class/hwmon")
+    def _read_temperature(
+        self,
+        path: Path,
+    ) -> float | None:
 
-    def __init__(self) -> None:
+        try:
 
-        self.devices = self._discover_hwmon()
+            value = float(
+                path.read_text().strip()
+            )
 
-    # -------------------------------------------------
+        except (
+            OSError,
+            ValueError,
+        ):
 
-    def _discover_hwmon(self) -> dict[str, Path]:
-        """
-        Odszukuje wszystkie urządzenia hwmon.
+            return None
 
-        Zwraca np.
-
-        {
-            "cpu_thermal": Path(...),
-            "nvme": Path(...),
-            "pwmfan": Path(...)
-        }
-        """
-
-        devices: dict[str, Path] = {}
-
-        if not self.HWMON_ROOT.exists():
-            return devices
-
-        for hwmon in self.HWMON_ROOT.glob("hwmon*"):
-
-            name = read_text(hwmon / "name")
-
-            if name:
-
-                devices[name] = hwmon
-
-        return devices
-
-    # -------------------------------------------------
-
-    def _temperature(self, device: str) -> float:
-        """
-        Odczyt temp1_input.
-
-        Większość sterowników Linux udostępnia
-        temperaturę właśnie pod tą nazwą.
-        """
-
-        hwmon = self.devices.get(device)
-
-        if hwmon is None:
-            return 0.0
-
-        temp = read_float(
-            hwmon / "temp1_input"
-        )
-
-        if temp > 1000:
-            temp /= 1000
-
-        return temp
-
-    # -------------------------------------------------
-
-    def collect_temperatures(self) -> TemperatureInfo:
-
-        info = TemperatureInfo()
-
-        info.cpu = self._temperature(
-            "cpu_thermal"
-        )
-
-        info.nvme = self._temperature(
-            "nvme"
-        )
-
-        info.rp1 = self._temperature(
-            "rp1_adc"
-        )
-
-        return info
-
-    # -------------------------------------------------
-
-    def collect_fan(self) -> FanInfo:
-
-        fan = FanInfo()
-
-        hwmon = self.devices.get(
-            "pwmfan"
-        )
-
-        if hwmon is None:
-            return fan
-
-        fan.available = True
-
-        fan.device = "pwmfan"
-
-        fan.rpm = read_int(
-            hwmon / "fan1_input"
-        )
-
-        fan.pwm = read_int(
-            hwmon / "pwm1"
-        )
-
-        fan.pwm_mode = read_int(
-            hwmon / "pwm1_enable"
-        )
-
-        fan.pwm_percent = pwm_to_percent(
-            fan.pwm
-        )
-
-        return fan
-
-    # -------------------------------------------------
-
-    def collect_voltage(self) -> float:
-        """
-        Odczyt napięcia.
-
-        Sterownik rpi_volt może eksportować
-        różne kanały napięć.
-
-        Aktualnie odczytywany jest temp1_input
-        jeśli istnieje.
-
-        W przyszłości można łatwo rozbudować
-        o in0_input, in1_input itd.
-        """
-
-        hwmon = self.devices.get(
-            "rpi_volt"
-        )
-
-        if hwmon is None:
-            return 0.0
-
-        value = read_float(
-            hwmon / "temp1_input"
-        )
-
+        # Linux thermal zones zwykle
+        # zwracają temperaturę w milikelwinach.
         if value > 1000:
             value /= 1000
 
         return value
 
-    # -------------------------------------------------
+    # ======================================================
+    # THERMAL
+    # ======================================================
 
-    def collect(self) -> tuple[
-        TemperatureInfo,
-        FanInfo,
-    ]:
+    def _collect_thermal_zones(
+        self,
+    ) -> list[TemperatureInfo]:
 
-        temperatures = self.collect_temperatures()
+        result = []
 
-        temperatures.voltage = (
-            self.collect_voltage()
+        thermal_path = Path(
+            "/sys/class/thermal"
         )
 
-        fan = self.collect_fan()
+        if not thermal_path.exists():
+            return result
 
-        return (
-            temperatures,
-            fan,
+        for zone in sorted(
+            thermal_path.glob(
+                "thermal_zone*"
+            )
+        ):
+
+            temperature = (
+                self._read_temperature(
+                    zone / "temp"
+                )
+            )
+
+            if temperature is None:
+                continue
+
+            zone_type = ""
+
+            try:
+
+                zone_type = (
+                    zone / "type"
+                ).read_text().strip()
+
+            except OSError:
+
+                pass
+
+            name = (
+                config.TEMPERATURE_NAMES.get(
+                    zone_type,
+                    config.TEMPERATURE_NAMES.get(
+                        zone.name,
+                        zone_type
+                        or zone.name,
+                    ),
+                )
+            )
+
+            result.append(
+                TemperatureInfo(
+                    name=name,
+                    temperature=temperature,
+                    source=str(zone),
+                )
+            )
+
+        return result
+
+    # ======================================================
+    # HWMON
+    # ======================================================
+
+    def _collect_hwmon(
+        self,
+    ) -> list[TemperatureInfo]:
+
+        result = []
+
+        hwmon_path = config.HWMON_PATH
+
+        if not hwmon_path.exists():
+            return result
+
+        for hwmon in sorted(
+            hwmon_path.glob("hwmon*")
+        ):
+
+            name_file = hwmon / "name"
+
+            try:
+
+                group = (
+                    name_file
+                    .read_text()
+                    .strip()
+                )
+
+            except OSError:
+
+                continue
+
+            if group == "pwmfan":
+                continue
+
+            for temp_file in sorted(
+                hwmon.glob("temp*_input")
+            ):
+
+                temperature = (
+                    self._read_temperature(
+                        temp_file
+                    )
+                )
+
+                if temperature is None:
+                    continue
+
+                label_file = (
+                    temp_file.parent
+                    / (
+                        temp_file.name
+                        .replace(
+                            "_input",
+                            "_label",
+                        )
+                    )
+                )
+
+                label = ""
+
+                try:
+
+                    label = (
+                        label_file
+                        .read_text()
+                        .strip()
+                    )
+
+                except OSError:
+
+                    pass
+
+                sensor_name = (
+                    label
+                    or config.TEMPERATURE_NAMES.get(
+                        group,
+                        group,
+                    )
+                )
+
+                result.append(
+                    TemperatureInfo(
+                        name=sensor_name,
+                        temperature=temperature,
+                        source=str(
+                            temp_file
+                        ),
+                    )
+                )
+
+        return result
+
+    # ======================================================
+    # COLLECT
+    # ======================================================
+
+    def collect(
+        self,
+    ) -> TemperaturesInfo:
+
+        sensors = []
+
+        sensors.extend(
+            self._collect_thermal_zones()
+        )
+
+        sensors.extend(
+            self._collect_hwmon()
+        )
+
+        # Usuwamy duplikaty po nazwie,
+        # pozostawiając ostatni odczyt.
+        unique = {}
+
+        for sensor in sensors:
+
+            unique[sensor.name] = sensor
+
+        return TemperaturesInfo(
+            sensors=list(
+                unique.values()
+            )
         )
 
 

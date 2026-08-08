@@ -8,6 +8,7 @@ w pozostały kod programu.
 
 from pathlib import Path
 
+
 # ==========================================================
 # INFORMACJE O APLIKACJI
 # ==========================================================
@@ -18,24 +19,66 @@ APP_VERSION = "2.2"
 
 AUTHOR = "tom marki + ChatGPT"
 
+
 # ==========================================================
 # ŚCIEŻKI
 # ==========================================================
 
-PROJECT_DIR = Path(__file__).parent
+PROJECT_DIR = Path(__file__).resolve().parent
 
 LOG_DIR = PROJECT_DIR / "logs"
 
 LOG_FILE = LOG_DIR / "dashboard.log"
+
 
 # ==========================================================
 # PROXMOX
 # ==========================================================
 
 PROXMOX_NODE = None
-# None = automatycznie pobierz hostname
+
+# None = automatycznie pobierz hostname.
 
 PIHOLE_CTID = 100
+
+# ID kontenera LXC z Pi-hole.
+
+
+# ==========================================================
+# PI-HOLE
+# ==========================================================
+
+PIHOLE_HOST = "127.0.0.1"
+
+# Adres IP Pi-hole.
+#
+# UWAGA:
+# Jeżeli Pi-hole działa w CT100 i ma własny adres IP,
+# tutaj należy wpisać adres IP tego kontenera.
+#
+# Przykład:
+#
+# PIHOLE_HOST = "192.168.1.10"
+
+
+PIHOLE_PORT = 80
+
+# Port HTTP API Pi-hole.
+
+
+PIHOLE_API_TOKEN = ""
+
+# Token API Pi-hole.
+#
+# Dla konfiguracji bez uwierzytelniania pozostaw:
+#
+# ""
+
+
+PIHOLE_TIMEOUT = 2.0
+
+# Maksymalny czas oczekiwania na odpowiedź API.
+
 
 # ==========================================================
 # ODŚWIEŻANIE
@@ -61,6 +104,9 @@ PIHOLE_INTERVAL = 10
 
 NVME_INTERVAL = 5
 
+FAN_INTERVAL = 2
+
+
 # ==========================================================
 # PROGI CPU
 # ==========================================================
@@ -69,6 +115,7 @@ CPU_WARNING = 60
 
 CPU_CRITICAL = 85
 
+
 # ==========================================================
 # RAM
 # ==========================================================
@@ -76,6 +123,7 @@ CPU_CRITICAL = 85
 RAM_WARNING = 70
 
 RAM_CRITICAL = 90
+
 
 # ==========================================================
 # TEMPERATURY
@@ -93,6 +141,7 @@ RP1_TEMP_WARNING = 60
 
 RP1_TEMP_CRITICAL = 80
 
+
 # ==========================================================
 # DYSKI
 # ==========================================================
@@ -100,6 +149,7 @@ RP1_TEMP_CRITICAL = 80
 DISK_WARNING = 75
 
 DISK_CRITICAL = 90
+
 
 # ==========================================================
 # WENTYLATOR
@@ -111,6 +161,28 @@ FAN_WARNING_RPM = 1500
 
 PWM_MAX = 255
 
+# Ścieżka hwmon wentylatora.
+#
+# Na Twoim RPi5 wcześniej wykryliśmy:
+#
+# /sys/class/hwmon/hwmon3
+#     name = pwmfan
+#     fan1_input = 2948
+#     pwm1 = 75
+#     pwm1_enable = 1
+#
+# Dlatego NIE wpisujemy tutaj hwmon3 na sztywno.
+# Kolektor będzie wyszukiwał urządzenie po nazwie "pwmfan".
+
+FAN_HWMON_NAME = "pwmfan"
+
+FAN_INPUT_NAME = "fan1_input"
+
+FAN_PWM_NAME = "pwm1"
+
+FAN_PWM_ENABLE_NAME = "pwm1_enable"
+
+
 # ==========================================================
 # PASKI
 # ==========================================================
@@ -120,6 +192,9 @@ CPU_BAR_WIDTH = 20
 RAM_BAR_WIDTH = 30
 
 DISK_BAR_WIDTH = 25
+
+FAN_BAR_WIDTH = 20
+
 
 # ==========================================================
 # KOLORY
@@ -157,6 +232,7 @@ COLOR_DIM = "grey62"
 
 COLOR_BORDER = "grey50"
 
+
 # ==========================================================
 # IKONY
 # ==========================================================
@@ -187,6 +263,7 @@ ICON_OK = "✔"
 
 ICON_ERROR = "✖"
 
+
 # ==========================================================
 # PLIKI SYSTEMOWE
 # ==========================================================
@@ -199,63 +276,43 @@ HWMON_PATH = Path(
     "/sys/class/hwmon"
 )
 
+
 # ==========================================================
 # IGNOROWANE SYSTEMY PLIKÓW
 # ==========================================================
 
 IGNORED_FILESYSTEMS = {
-
     "tmpfs",
-
     "devtmpfs",
-
     "proc",
-
     "sysfs",
-
     "cgroup",
-
     "cgroup2",
-
     "overlay",
-
     "squashfs",
-
     "tracefs",
-
     "debugfs",
-
     "devpts",
-
     "mqueue",
-
     "securityfs",
-
 }
+
 
 # ==========================================================
 # MAPOWANIE CZUJNIKÓW
 # ==========================================================
 
 TEMPERATURE_NAMES = {
-
     "cpu_thermal": "CPU",
-
     "thermal_zone0": "CPU",
-
     "nvme": "NVMe",
-
     "Composite": "NVMe",
-
     "Sensor 1": "NVMe",
-
     "rp1_adc": "RP1",
-
     "rpi_volt": "Voltage",
-
     "pwmfan": "Fan",
-
 }
+
 
 # ==========================================================
 # ALERTY
@@ -266,6 +323,7 @@ ENABLE_SOUND_ALERT = False
 ENABLE_POPUP_ALERT = True
 
 ENABLE_LOGGING = True
+
 
 # ==========================================================
 # PANEL PI-HOLE
@@ -283,6 +341,7 @@ SHOW_COOLING_PANEL = True
 
 SHOW_PROXMOX_PANEL = True
 
+
 # ==========================================================
 # PANEL DYSKÓW
 # ==========================================================
@@ -291,6 +350,7 @@ SHOW_BOOT_PARTITION = True
 
 SHOW_TMPFS = False
 
+
 # ==========================================================
 # SIEĆ
 # ==========================================================
@@ -298,6 +358,7 @@ SHOW_TMPFS = False
 PING_TARGET = "1.1.1.1"
 
 DNS_TEST_HOST = "google.com"
+
 
 # ==========================================================
 # FORMATY
@@ -309,10 +370,13 @@ DATE_FORMAT = "%Y-%m-%d"
 
 DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 
+
 # ==========================================================
 # NAGŁÓWEK
 # ==========================================================
 
-HEADER_TITLE = "Raspberry Pi 5 • Debian Trixie • Proxmox VE 9"
+HEADER_TITLE = (
+    "Raspberry Pi 5 • Debian Trixie • Proxmox VE 9"
+)
 
 FOOTER_TEXT = "Kiosk Dashboard"

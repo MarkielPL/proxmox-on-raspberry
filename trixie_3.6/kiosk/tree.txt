@@ -1,79 +1,95 @@
 kiosk/
 │
-├── dashboard.py              # główna pętla programu
-├── config.py                 # konfiguracja aplikacji
-├── models.py                 # dataclasses
-├── utils.py                  # funkcje pomocnicze
-├── theme.py                  # kolory, style Rich, paski
-│
-├── collectors/
-│   ├── __init__.py
-│   ├── cpu.py                # CPU, load average, częstotliwość
-│   ├── memory.py             # RAM + SWAP
-│   ├── sensors.py            # temperatury, wentylator, napięcia
-│   ├── network.py            # interfejsy, transfer, IP
-│   ├── storage.py            # NVMe, dyski, SMART
-│   ├── proxmox.py            # host Proxmox
-│   └── pihole.py             # CT100
+├── config.py
+├── models.py
+├── dashboard.py
+├── panels.py
 │
 ├── services/
 │   ├── __init__.py
-│   ├── scheduler.py          # harmonogram odświeżania
-│   ├── cache.py              # cache danych
-│   └── alerts.py             # alarmy
+│   ├── cache.py
+│   ├── scheduler.py
+│   └── alerts.py
 │
-├── panels.py                 # wszystkie panele Rich
-│
-├── logs/
-│   └── dashboard.log
-│
-├── requirements.txt
-└── README.md
+└── collectors/
+    ├── __init__.py
+    ├── cpu.py
+    ├── memory.py
+    ├── network.py
+    ├── sensors.py
+    ├── fan.py
+    ├── storage.py
+    ├── system.py
+    ├── nvme.py
+    ├── proxmox.py
+    └── pihole.py
 
 
 kolejność:
-config.py
-↓
-models.py
-↓
-utils.py
-↓
-system_info.py
-↓
-network.py
-↓
-storage.py
-↓
-sensors.py
-↓
-proxmox.py
-↓
-pihole.py
-↓
-panels.py
-↓
-dashboard.py
+                     ┌──────────────┐
+                     │   config.py  │
+                     └──────┬───────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────┐
+│                    collectors/                      │
+│                                                     │
+│  cpu.py       memory.py       network.py            │
+│  sensors.py  storage.py       nvme.py               │
+│  fan.py      system.py        proxmox.py            │
+│  pihole.py                                         │
+└────────────────────────┬────────────────────────────┘
+                         │
+                         ▼
+                   ┌───────────┐
+                   │ models.py │
+                   └─────┬─────┘
+                         │
+                         ▼
+                   ┌───────────┐
+                   │ services/ │
+                   │   cache   │
+                   └─────┬─────┘
+                         │
+                         ▼
+                   ┌───────────┐
+                   │ panels.py │
+                   └─────┬─────┘
+                         │
+                         ▼
+                 ┌────────────────┐
+                 │ dashboard.py   │
+                 └────────────────┘
 
-schemat blokowy:                    ┌──────────────────────────────────────────────────────────────────────────┐
-dashboard.py                        │ Raspberry Pi 5 │ Debian Trixie │ Proxmox VE 9 │ 2026-08-06 12:44:11      │
-      │                             ├──────────────────────────────┬───────────────────────────────────────────┤
-      ▼                             │ CPU                          │ RAM                                       │
- panels.py                          │ CPU0 ███                     │ ████████░░                                │
-      │                             │ CPU1 ██                      │                                           │
- ┌────┼─────────────┐               │ CPU2 ████                    │                                           │
- ▼    ▼      ▼      ▼               │ CPU3 █                       │                                           │
-CPU  RAM   TEMP   DISK              ├──────────────────────────────┼───────────────────────────────────────────┤
-      │                             │ Cooling                      │ Pi-hole CT100                             │
-      ▼                             │ CPU 46.8°C                   │ RUNNING                                   │
- system_info.py                     │ NVMe 38.2°C                  │ CPU 0.3%                                  │
-                                    │ FAN 2948 RPM                 │ RAM 248 MB                                │
-                                    │ PWM 29%                      │ DNS OK                                    │
-                                    │ POWER OK                     │ Queries 125432                            │
-                                    ├──────────────────────────────┼───────────────────────────────────────────┤
-                                    │ Network                      │ Storage                                   │            
-                                    │ ↓ 2.1 MB/s                   │ NVMe    ███░░░░                           │
-                                    │ ↑ 185 KB/s                   │ /boot   █░░░░                             │
-                                    ├──────────────────────────────────────────────────────────────────────────┤
-                                    │ Alerts: none                                                    12d 04h  │
-                                    └──────────────────────────────────────────────────────────────────────────┘
+
+                                    
+                                    
+                                    
+                                    
+                                    
+                                    
+                                    
+
+┌──────────────────────────────────────────────────────────────────────────┐
+│ Raspberry Pi 5 │ Debian Trixie │ Proxmox VE 9 │ 2026-08-06 12:44:11      │
+├──────────────────────────────┬───────────────────────────────────────────┤
+│ CPU                          │ RAM                                       │
+│ CPU0 ███                     │ ████████░░                                │
+│ CPU1 ██                      │                                           │
+│ CPU2 ████                    │                                           │
+│ CPU3 █                       │                                           │
+├──────────────────────────────┼───────────────────────────────────────────┤
+│ Cooling                      │ Pi-hole CT100                             │
+│ CPU 46.8°C                   │ RUNNING                                   │
+│ NVMe 38.2°C                  │ CPU 0.3%                                  │
+│ FAN 2948 RPM                 │ RAM 248 MB                                │
+│ PWM 29%                      │ DNS OK                                    │
+│ POWER OK                     │ Queries 125432                            │
+├──────────────────────────────┼───────────────────────────────────────────┤
+│ Network                      │ Storage                                   │            
+│ ↓ 2.1 MB/s                   │ NVMe    ███░░░░                           │
+│ ↑ 185 KB/s                   │ /boot   █░░░░                             │
+├──────────────────────────────────────────────────────────────────────────┤
+│ Alerts: none                                                    12d 04h  │
+└──────────────────────────────────────────────────────────────────────────┘
                                     
