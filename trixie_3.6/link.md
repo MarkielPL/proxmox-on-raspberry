@@ -219,5 +219,8 @@ content:
 >WantedBy=graphical.target
 
 ```
+sudo systemctl daemon-reload
+sudo systemctl start switch-to-tty3.service
+sudo systemctl status switch-to-tty3.service
 sudo systemctl enable switch-to-tty3.service
 ```
