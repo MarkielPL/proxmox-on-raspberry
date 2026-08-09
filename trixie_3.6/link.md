@@ -27,9 +27,12 @@ sudo apt update && sudo apt install -y \
 
 - ## Displaying BTOP in kiosk mode after startup:
 
+
 ```bash
 sudo nano /etc/systemd/system/btop-display.service
 ```
+
+
 Content:
 
 >[Unit]
