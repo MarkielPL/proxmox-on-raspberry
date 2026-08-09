@@ -196,9 +196,9 @@ content:
 >
 >After=getty.target systemd-user-sessions.service
 >
-># Jeśli używasz menedżera logowania (GDM, LightDM, SDDM), dodaj też:
+>$# Jeśli używasz menedżera logowania (GDM, LightDM, SDDM), dodaj też:
 >
-># After=display-manager.service
+>$# After=display-manager.service
 >
 >
 >
