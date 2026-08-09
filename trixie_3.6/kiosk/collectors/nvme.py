@@ -1,27 +1,41 @@
 """
-Monitoring dysku NVMe Raspberry Pi.
+collectors/nvme.py
+
+Monitoring dysku NVMe Raspberry Pi 5.
 
 Źródła:
 
     /sys/class/nvme/
+    /sys/class/nvme/nvmeX/
     /sys/class/hwmon/
 
-Moduł odpowiada wyłącznie za odczyt danych.
+Collector próbuje odczytać:
+    - model,
+    - numer seryjny,
+    - firmware,
+    - temperaturę,
+    - procent zużycia,
+    - power-on hours,
+    - power cycles,
+    - unsafe shutdowns,
+    - media errors.
 
-Nie tworzy paneli Rich.
-Nie wykonuje formatowania UI.
+Brak któregoś z parametrów nie jest traktowany
+jako błąd całego collectora.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
+import config
+
 from models import NvmeInfo
 
 
 class NvmeCollector:
     """
-    Kolektor informacji o urządzeniu NVMe.
+    Kolektor NVMe.
     """
 
     BASE_PATH = Path(
@@ -29,23 +43,18 @@ class NvmeCollector:
     )
 
     # ======================================================
-    # ODCZYT TEKSTU
+    # READ TEXT
     # ======================================================
 
     @staticmethod
     def _read_text(
         path: Path,
     ) -> str:
-        """
-        Bezpiecznie odczytuje plik tekstowy.
-        """
 
         try:
 
             return (
-                path.read_text(
-                    encoding="utf-8"
-                )
+                path.read_text()
                 .strip()
             )
 
@@ -54,23 +63,18 @@ class NvmeCollector:
             return ""
 
     # ======================================================
-    # ODCZYT LICZBY
+    # READ INT
     # ======================================================
 
     @staticmethod
     def _read_int(
         path: Path,
     ) -> int:
-        """
-        Bezpiecznie odczytuje liczbę całkowitą.
-        """
 
         try:
 
             return int(
-                path.read_text(
-                    encoding="utf-8"
-                )
+                path.read_text()
                 .strip()
             )
 
@@ -82,46 +86,14 @@ class NvmeCollector:
             return 0
 
     # ======================================================
-    # ODCZYT FLOAT
-    # ======================================================
-
-    @staticmethod
-    def _read_float(
-        path: Path,
-    ) -> float:
-        """
-        Bezpiecznie odczytuje liczbę zmiennoprzecinkową.
-        """
-
-        try:
-
-            return float(
-                path.read_text(
-                    encoding="utf-8"
-                )
-                .strip()
-            )
-
-        except (
-            OSError,
-            ValueError,
-        ):
-
-            return 0.0
-
-    # ======================================================
-    # ZNAJDŹ NVMe
+    # FIND DEVICE
     # ======================================================
 
     def _find_device(
         self,
     ) -> Path | None:
         """
-        Znajduje pierwszy kontroler NVMe.
-
-        Przykład:
-
-            /sys/class/nvme/nvme0
+        Znajduje pierwsze urządzenie nvmeX.
         """
 
         if not self.BASE_PATH.exists():
@@ -129,19 +101,20 @@ class NvmeCollector:
 
         devices = sorted(
             self.BASE_PATH.glob(
-                "nvme[0-9]*"
+                "nvme*"
             )
         )
 
         for device in devices:
 
             if device.is_dir():
+
                 return device
 
         return None
 
     # ======================================================
-    # TEMPERATURA
+    # TEMPERATURE
     # ======================================================
 
     def _get_temperature(
@@ -150,7 +123,7 @@ class NvmeCollector:
     ) -> float:
         """
         Próbuje znaleźć temperaturę NVMe
-        przez powiązany katalog hwmon.
+        poprzez powiązany hwmon.
         """
 
         hwmon_path = (
@@ -160,45 +133,76 @@ class NvmeCollector:
         if not hwmon_path.exists():
             return 0.0
 
-        for hwmon in hwmon_path.glob(
-            "hwmon*"
+        for sensor_dir in sorted(
+            hwmon_path.glob(
+                "hwmon*"
+            )
         ):
 
             for temp_file in sorted(
-                hwmon.glob(
+                sensor_dir.glob(
                     "temp*_input"
                 )
             ):
 
-                raw = self._read_float(
-                    temp_file
-                )
+                try:
 
-                if raw == 0:
+                    raw = float(
+                        temp_file
+                        .read_text()
+                        .strip()
+                    )
+
+                    return raw / 1000.0
+
+                except (
+                    OSError,
+                    ValueError,
+                ):
+
                     continue
 
-                # hwmon podaje temperaturę
-                # najczęściej w milistopniach.
-                if abs(raw) > 1000:
-                    raw /= 1000.0
-
-                return raw
-
         return 0.0
+
+    # ======================================================
+    # SMART / SYSFS ATTRIBUTES
+    # ======================================================
+
+    def _read_optional_int(
+        self,
+        device: Path,
+        names: tuple[str, ...],
+    ) -> int:
+        """
+        Próbuje znaleźć wartość pod kilkoma możliwymi nazwami.
+        """
+
+        for name in names:
+
+            path = device / name
+
+            if not path.exists():
+                continue
+
+            value = self._read_int(path)
+
+            if value:
+                return value
+
+        return 0
 
     # ======================================================
     # COLLECT
     # ======================================================
 
-    def collect(
-        self,
-    ) -> NvmeInfo:
+    def collect(self) -> NvmeInfo:
         """
-        Pobiera informacje o pierwszym
-        znalezionym urządzeniu NVMe.
+        Pobiera informacje o pierwszym urządzeniu NVMe.
         """
 
-        device = self._find_device()
+        device = (
+            self._find_device()
+        )
 
         if device is None:
 
@@ -212,27 +216,25 @@ class NvmeCollector:
         )
 
         # --------------------------------------------------
-        # MODEL
+        # IDENTYFIKACJA
         # --------------------------------------------------
 
-        info.model = self._read_text(
-            device / "model"
+        info.model = (
+            self._read_text(
+                device / "model"
+            )
         )
 
-        # --------------------------------------------------
-        # SERIAL
-        # --------------------------------------------------
-
-        info.serial = self._read_text(
-            device / "serial"
+        info.serial = (
+            self._read_text(
+                device / "serial"
+            )
         )
 
-        # --------------------------------------------------
-        # FIRMWARE
-        # --------------------------------------------------
-
-        info.firmware = self._read_text(
-            device / "firmware_rev"
+        info.firmware = (
+            self._read_text(
+                device / "firmware_rev"
+            )
         )
 
         # --------------------------------------------------
@@ -244,6 +246,61 @@ class NvmeCollector:
                 device
             )
         )
+
+        # --------------------------------------------------
+        # DANE EKSPLOATACYJNE
+        # --------------------------------------------------
+
+        info.power_on_hours = (
+            self._read_optional_int(
+                device,
+                (
+                    "power_on_hours",
+                    "power_on_hours_raw",
+                ),
+            )
+        )
+
+        info.power_cycles = (
+            self._read_optional_int(
+                device,
+                (
+                    "power_cycles",
+                    "power_cycles_raw",
+                ),
+            )
+        )
+
+        info.unsafe_shutdowns = (
+            self._read_optional_int(
+                device,
+                (
+                    "unsafe_shutdowns",
+                    "unsafe_shutdowns_raw",
+                ),
+            )
+        )
+
+        info.media_errors = (
+            self._read_optional_int(
+                device,
+                (
+                    "media_errors",
+                    "media_errors_raw",
+                ),
+            )
+        )
+
+        # --------------------------------------------------
+        # TEMPERATURA Z CONFIG
+        # --------------------------------------------------
+        #
+        # Sam collector nie podejmuje decyzji
+        # o kolorze ani stanie alarmowym.
+        #
+        # Progi znajdują się w config.py
+        # i będą wykorzystane przez panels.py.
+        # --------------------------------------------------
 
         return info
 

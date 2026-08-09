@@ -1,55 +1,152 @@
 """
-Cache danych dashboardu.
+services/cache.py
 
-Warstwa cache przechowuje ostatni poprawny wynik
-kolektorów i określa, czy dane wymagają ponownego
-pobrania.
+Pamięć podręczna danych Raspberry Pi Kiosk Dashboard.
 
-Dzięki temu cięższe operacje nie są wykonywane
-przy każdym odświeżeniu ekranu.
+Cache przechowuje ostatnie poprawne wyniki collectorów
+oraz kontroluje interwały ich aktualizacji.
+
+Architektura:
+
+    collectors
+         ↓
+       cache
+         ↓
+    collector_manager
+         ↓
+    DashboardState
+         ↓
+       panels
+         ↓
+     dashboard
+
+Założenia:
+
+    - ostatnia poprawna wartość pozostaje dostępna
+      nawet po chwilowym błędzie collectora,
+
+    - błąd nie usuwa poprzednich danych,
+
+    - każdy collector może posiadać własny interwał,
+
+    - UI może odświeżać się często bez wykonywania
+      ciężkich operacji przy każdym odświeżeniu,
+
+    - cache nie zawiera żadnego kodu Rich/UI.
 """
 
 from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Generic
-from typing import TypeVar
+from typing import Any
 
 
-T = TypeVar("T")
-
+# ==========================================================
+# CACHE ENTRY
+# ==========================================================
 
 @dataclass
-class CacheEntry(
-    Generic[T]
-):
+class CacheEntry:
     """
-    Pojedynczy wpis cache.
+    Pojedynczy wpis pamięci podręcznej.
+
+    value:
+        Ostatnia poprawnie pobrana wartość.
+
+    updated:
+        Czas monotoniczny ostatniej poprawnej aktualizacji.
+
+    error:
+        Ostatni błąd związany z tym źródłem.
     """
 
-    value: T | None = None
+    value: Any = None
 
-    timestamp: float = 0.0
+    updated: float = 0.0
 
     error: str = ""
 
-    update_count: int = 0
 
+# ==========================================================
+# DATA CACHE
+# ==========================================================
 
 class DataCache:
     """
-    Prosty cache TTL.
-
-    Każdy wpis ma własny czas życia.
+    Centralny cache danych collectorów.
     """
 
     def __init__(self) -> None:
 
-        self._entries: dict[
+        self._data: dict[
             str,
             CacheEntry,
         ] = {}
+
+    # ======================================================
+    # SET
+    # ======================================================
+
+    def set(
+        self,
+        key: str,
+        value: Any,
+    ) -> None:
+        """
+        Zapisuje nową poprawną wartość.
+
+        Poprawna aktualizacja:
+
+            - aktualizuje value,
+            - aktualizuje timestamp,
+            - kasuje poprzedni błąd.
+        """
+
+        entry = self._data.get(
+            key
+        )
+
+        if entry is None:
+
+            entry = CacheEntry()
+
+            self._data[key] = entry
+
+        entry.value = value
+
+        entry.updated = time.monotonic()
+
+        # Poprawny odczyt kasuje
+        # poprzedni błąd.
+
+        entry.error = ""
+
+    # ======================================================
+    # GET
+    # ======================================================
+
+    def get(
+        self,
+        key: str,
+        default: Any = None,
+    ) -> Any:
+        """
+        Zwraca ostatnią wartość.
+
+        Jeżeli wartość nie istnieje,
+        zwracany jest default.
+        """
+
+        entry = self._data.get(
+            key
+        )
+
+        if entry is None:
+
+            return default
+
+        return entry.value
 
     # ======================================================
     # GET ENTRY
@@ -60,110 +157,37 @@ class DataCache:
         key: str,
     ) -> CacheEntry | None:
         """
-        Zwraca cały wpis cache.
+        Zwraca kompletny wpis cache.
         """
 
-        return self._entries.get(
+        return self._data.get(
             key
         )
 
     # ======================================================
-    # GET
+    # UPDATED
     # ======================================================
 
-    def get(
+    def updated(
         self,
         key: str,
-        default=None,
-    ):
+    ) -> float:
         """
-        Zwraca ostatnią wartość.
-        """
+        Zwraca czas ostatniej poprawnej aktualizacji.
 
-        entry = (
-            self._entries.get(
-                key
-            )
-        )
-
-        if entry is None:
-            return default
-
-        if entry.value is None:
-            return default
-
-        return entry.value
-
-    # ======================================================
-    # SET
-    # ======================================================
-
-    def set(
-        self,
-        key: str,
-        value,
-    ) -> None:
-        """
-        Zapisuje wartość do cache.
+        Jeżeli dane nigdy nie zostały pobrane,
+        zwracane jest 0.0.
         """
 
-        now = time.monotonic()
-
-        entry = (
-            self._entries.get(
-                key
-            )
+        entry = self._data.get(
+            key
         )
 
         if entry is None:
 
-            entry = CacheEntry()
+            return 0.0
 
-            self._entries[key] = (
-                entry
-            )
-
-        entry.value = value
-
-        entry.timestamp = now
-
-        entry.error = ""
-
-        entry.update_count += 1
-
-    # ======================================================
-    # ERROR
-    # ======================================================
-
-    def set_error(
-        self,
-        key: str,
-        error: str,
-    ) -> None:
-        """
-        Zapisuje błąd kolektora.
-
-        Ostatnia poprawna wartość pozostaje
-        dostępna dla dashboardu.
-        """
-
-        entry = (
-            self._entries.get(
-                key
-            )
-        )
-
-        if entry is None:
-
-            entry = CacheEntry()
-
-            self._entries[key] = (
-                entry
-            )
-
-        entry.error = str(
-            error
-        )
+        return entry.updated
 
     # ======================================================
     # AGE
@@ -174,61 +198,28 @@ class DataCache:
         key: str,
     ) -> float:
         """
-        Wiek danych w sekundach.
+        Zwraca wiek danych w sekundach.
+
+        Brak danych:
+
+            inf
         """
 
-        entry = (
-            self._entries.get(
-                key
-            )
+        updated = self.updated(
+            key
         )
 
-        if (
-            entry is None
-            or entry.timestamp <= 0
-        ):
+        if updated <= 0:
 
             return float("inf")
 
         return max(
-            time.monotonic()
-            - entry.timestamp,
             0.0,
+            time.monotonic() - updated,
         )
 
     # ======================================================
-    # VALID
-    # ======================================================
-
-    def valid(
-        self,
-        key: str,
-        ttl: float,
-    ) -> bool:
-        """
-        Sprawdza, czy dane są nadal świeże.
-        """
-
-        entry = (
-            self._entries.get(
-                key
-            )
-        )
-
-        if (
-            entry is None
-            or entry.value is None
-        ):
-
-            return False
-
-        return (
-            self.age(key)
-            < ttl
-        )
-
-    # ======================================================
-    # NEED UPDATE
+    # NEEDS UPDATE
     # ======================================================
 
     def needs_update(
@@ -237,27 +228,141 @@ class DataCache:
         interval: float,
     ) -> bool:
         """
-        Zwraca True, jeżeli dane powinny
-        zostać ponownie pobrane.
+        Sprawdza, czy dane wymagają aktualizacji.
+
+        Aktualizacja jest wymagana gdy:
+
+            1. wpis nie istnieje,
+
+            2. wartość nigdy nie została
+               poprawnie pobrana,
+
+            3. interwał jest równy lub mniejszy
+               od zera,
+
+            4. upłynął określony interwał.
         """
 
-        entry = (
-            self._entries.get(
-                key
-            )
+        entry = self._data.get(
+            key
         )
 
-        if (
-            entry is None
-            or entry.value is None
-        ):
+        if entry is None:
+
+            return True
+
+        if entry.updated <= 0:
+
+            return True
+
+        if interval <= 0:
 
             return True
 
         return (
-            self.age(key)
+            time.monotonic()
+            - entry.updated
             >= interval
         )
+
+    # ======================================================
+    # SET ERROR
+    # ======================================================
+
+    def set_error(
+        self,
+        key: str,
+        error: str,
+    ) -> None:
+        """
+        Zapisuje błąd collectora.
+
+        Istniejąca poprawna wartość
+        pozostaje zachowana.
+        """
+
+        entry = self._data.get(
+            key
+        )
+
+        if entry is None:
+
+            entry = CacheEntry()
+
+            self._data[key] = entry
+
+        entry.error = error
+
+    # ======================================================
+    # GET ERROR
+    # ======================================================
+
+    def get_error(
+        self,
+        key: str,
+    ) -> str:
+        """
+        Zwraca ostatni błąd.
+        """
+
+        entry = self._data.get(
+            key
+        )
+
+        if entry is None:
+
+            return ""
+
+        return entry.error
+
+    # ======================================================
+    # HAS DATA
+    # ======================================================
+
+    def has(
+        self,
+        key: str,
+    ) -> bool:
+        """
+        Sprawdza, czy cache zawiera wartość.
+        """
+
+        entry = self._data.get(
+            key
+        )
+
+        if entry is None:
+
+            return False
+
+        return entry.value is not None
+
+    # ======================================================
+    # IS STALE
+    # ======================================================
+
+    def is_stale(
+        self,
+        key: str,
+        max_age: float,
+    ) -> bool:
+        """
+        Sprawdza, czy dane są starsze
+        niż dopuszczalny czas.
+
+        Jest to przydatne dla UI.
+
+        Przykład:
+
+            cache.is_stale(
+                "proxmox",
+                30,
+            )
+        """
+
+        return self.age(
+            key
+        ) > max_age
 
     # ======================================================
     # CLEAR
@@ -268,16 +373,22 @@ class DataCache:
         key: str | None = None,
     ) -> None:
         """
-        Czyści jeden wpis albo cały cache.
+        Usuwa dane z cache.
+
+        key=None:
+            czyści cały cache.
+
+        key="cpu":
+            czyści tylko CPU.
         """
 
         if key is None:
 
-            self._entries.clear()
+            self._data.clear()
 
             return
 
-        self._entries.pop(
+        self._data.pop(
             key,
             None,
         )
@@ -288,16 +399,75 @@ class DataCache:
 
     def keys(self) -> list[str]:
         """
-        Lista kluczy cache.
+        Zwraca listę wszystkich kluczy.
         """
 
         return list(
-            self._entries.keys()
+            self._data.keys()
         )
+
+    # ======================================================
+    # SNAPSHOT
+    # ======================================================
+
+    def snapshot(self) -> dict[str, Any]:
+        """
+        Zwraca prosty snapshot danych cache.
+
+        Przydatne podczas diagnostyki
+        oraz testów.
+        """
+
+        return {
+            key: entry.value
+            for key, entry
+            in self._data.items()
+        }
+
+    # ======================================================
+    # STATUS
+    # ======================================================
+
+    def status(
+        self,
+    ) -> dict[str, dict]:
+        """
+        Zwraca informacje diagnostyczne
+        dotyczące wszystkich wpisów.
+        """
+
+        result: dict[
+            str,
+            dict,
+        ] = {}
+
+        for key, entry in self._data.items():
+
+            result[key] = {
+
+                "has_data": (
+                    entry.value
+                    is not None
+                ),
+
+                "age": self.age(
+                    key
+                ),
+
+                "updated": (
+                    entry.updated
+                ),
+
+                "error": (
+                    entry.error
+                ),
+            }
+
+        return result
 
 
 # ==========================================================
-# GLOBALNY CACHE
+# GLOBAL CACHE
 # ==========================================================
 
 cache = DataCache()

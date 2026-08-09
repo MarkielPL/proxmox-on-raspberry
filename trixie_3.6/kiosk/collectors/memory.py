@@ -3,8 +3,8 @@ collectors/memory.py
 
 Odczyt informacji o pamięci RAM oraz SWAP.
 
-Moduł odpowiada wyłącznie za pobieranie danych.
-Nie zawiera logiki UI.
+Źródło danych:
+    psutil
 """
 
 from __future__ import annotations
@@ -12,60 +12,77 @@ from __future__ import annotations
 import psutil
 
 from models import MemoryInfo
-from models import SwapInfo
 
+
+# ==========================================================
+# MEMORY COLLECTOR
+# ==========================================================
 
 class MemoryCollector:
     """
-    Kolektor pamięci RAM oraz SWAP.
+    Kolektor RAM oraz SWAP.
     """
 
     # ======================================================
-    # MEMORY
+    # RAM
     # ======================================================
 
-    def collect_memory(self) -> MemoryInfo:
+    @staticmethod
+    def collect_memory() -> MemoryInfo:
         """
-        Pobiera informacje o RAM.
+        Pobiera informacje o pamięci RAM.
         """
 
         vm = psutil.virtual_memory()
 
-        return MemoryInfo(
-            total=vm.total,
-            used=vm.used,
-            available=vm.available,
-            free=vm.free,
-            percent=vm.percent,
-            cached=getattr(
-                vm,
-                "cached",
-                0,
-            ),
-            buffers=getattr(
-                vm,
-                "buffers",
-                0,
-            ),
+        info = MemoryInfo()
+
+        info.total = vm.total
+        info.used = vm.used
+        info.available = vm.available
+        info.free = vm.free
+        info.percent = vm.percent
+
+        # --------------------------------------------------
+        # Linux
+        # --------------------------------------------------
+
+        info.cached = getattr(
+            vm,
+            "cached",
+            0,
         )
+
+        info.buffers = getattr(
+            vm,
+            "buffers",
+            0,
+        )
+
+        return info
 
     # ======================================================
     # SWAP
     # ======================================================
 
-    def collect_swap(self) -> SwapInfo:
+    @staticmethod
+    def collect_swap() -> dict[str, int | float]:
         """
         Pobiera informacje o SWAP.
+
+        Zwracamy słownik, ponieważ obecny model
+        DashboardState przechowuje dane SWAP
+        bezpośrednio w MemoryInfo.
         """
 
         swap = psutil.swap_memory()
 
-        return SwapInfo(
-            total=swap.total,
-            used=swap.used,
-            free=swap.free,
-            percent=swap.percent,
-        )
+        return {
+            "total": swap.total,
+            "used": swap.used,
+            "free": swap.free,
+            "percent": swap.percent,
+        }
 
     # ======================================================
     # COLLECT
@@ -75,21 +92,24 @@ class MemoryCollector:
         self,
     ) -> tuple[
         MemoryInfo,
-        SwapInfo,
+        dict[str, int | float],
     ]:
         """
-        Pobiera komplet informacji
-        o RAM i SWAP.
+        Pobiera komplet informacji o RAM i SWAP.
         """
 
+        memory = self.collect_memory()
+
+        swap = self.collect_swap()
+
         return (
-            self.collect_memory(),
-            self.collect_swap(),
+            memory,
+            swap,
         )
 
 
 # ==========================================================
-# GLOBALNY COLLECTOR
+# GLOBAL COLLECTOR
 # ==========================================================
 
 memory_collector = MemoryCollector()

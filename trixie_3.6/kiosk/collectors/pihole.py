@@ -1,32 +1,38 @@
 """
-Monitoring Pi-hole działającego jako LXC.
+collectors/pihole.py
 
-Architektura:
+Monitoring Pi-hole działającego jako:
 
     Debian Trixie
-        │
-        └── Proxmox VE
-                │
-                └── CT100
-                        │
-                        └── Pi-hole
+        |
+        +-- Proxmox VE 9
+              |
+              +-- LXC CT100
+                    |
+                    +-- Pi-hole
 
-Collector:
+Collector komunikuje się z kontenerem
+przez lokalne:
 
-- sprawdza stan LXC,
-- sprawdza pihole-FTL,
-- pobiera adres IP kontenera,
-- próbuje odczytać statystyki Pi-hole.
+    pct exec 100
 
-Brak dostępności API nie powoduje awarii dashboardu.
+Nie wymaga adresu IP Pi-hole.
+
+Pobierane są:
+    - stan kontenera,
+    - stan pihole-FTL,
+    - wersja Pi-hole,
+    - podstawowe statystyki DNS,
+    - liczba domen,
+    - liczba klientów,
+    - liczba zapytań.
 """
 
 from __future__ import annotations
 
 import json
 import subprocess
-import urllib.error
-import urllib.request
+import time
 
 import config
 
@@ -35,7 +41,7 @@ from models import PiHoleInfo
 
 class PiHoleCollector:
     """
-    Kolektor informacji o Pi-hole.
+    Kolektor Pi-hole.
     """
 
     # ======================================================
@@ -48,7 +54,7 @@ class PiHoleCollector:
         timeout: float = 3.0,
     ) -> str:
         """
-        Wykonuje polecenie wewnątrz CT100.
+        Wykonuje polecenie wewnątrz CT Pi-hole.
         """
 
         try:
@@ -57,17 +63,19 @@ class PiHoleCollector:
                 [
                     "pct",
                     "exec",
-                    str(
-                        config.PIHOLE_CTID
-                    ),
+                    str(config.PIHOLE_CTID),
                     "--",
                     *command,
                 ],
                 capture_output=True,
                 text=True,
                 timeout=timeout,
-                check=False,
             )
+
+            if result.returncode != 0:
+                return ""
+
+            return result.stdout.strip()
 
         except (
             OSError,
@@ -76,20 +84,57 @@ class PiHoleCollector:
 
             return ""
 
-        if result.returncode != 0:
-            return ""
-
-        return result.stdout.strip()
-
     # ======================================================
-    # DNS STATUS
+    # CONTAINER STATUS
     # ======================================================
 
-    def _get_dns_status(
+    def _get_container_status(
         self,
     ) -> str:
+
+        try:
+
+            result = subprocess.run(
+                [
+                    "pct",
+                    "status",
+                    str(config.PIHOLE_CTID),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+
+            if result.returncode != 0:
+                return "unknown"
+
+            text = (
+                result.stdout
+                .strip()
+                .lower()
+            )
+
+            if "running" in text:
+                return "running"
+
+            if "stopped" in text:
+                return "stopped"
+
+        except (
+            OSError,
+            subprocess.SubprocessError,
+        ):
+            pass
+
+        return "unknown"
+
+    # ======================================================
+    # FTL STATUS
+    # ======================================================
+
+    def _get_dns_status(self) -> str:
         """
-        Sprawdza stan pihole-FTL.
+        Stan pihole-FTL.
         """
 
         output = self._pct_exec(
@@ -100,241 +145,223 @@ class PiHoleCollector:
             ]
         )
 
-        if not output:
-            return "unknown"
+        if output:
+            return output
 
-        return output.lower()
+        return "unknown"
 
     # ======================================================
-    # CONTAINER IP
+    # PI-HOLE VERSION
     # ======================================================
 
-    def _get_container_ip(
-        self,
-    ) -> str:
+    def _get_version(self) -> str:
         """
-        Pobiera adres IPv4 CT100.
-
-        pct exec hostname -I działa
-        niezależnie od konkretnej konfiguracji
-        interfejsu sieciowego.
+        Pobiera wersję Pi-hole.
         """
 
         output = self._pct_exec(
             [
-                "hostname",
-                "-I",
+                "pihole",
+                "-v",
             ]
         )
 
         if not output:
-            return ""
+            return "unknown"
 
-        addresses = (
-            output.split()
-        )
+        # Szukamy pierwszej sensownej linii.
+        for line in output.splitlines():
 
-        for address in addresses:
+            line = line.strip()
 
-            if "." in address:
-                return address
+            if "Pi-hole" in line:
 
-        return ""
+                return line
+
+            if "Core version" in line:
+
+                return line
+
+        return output.splitlines()[0]
 
     # ======================================================
     # API
     # ======================================================
 
-    @staticmethod
-    def _get_api_data(
-        ip_address: str,
-    ) -> dict:
+    def _get_api_data(self) -> dict:
         """
-        Próbuje pobrać dane API Pi-hole.
+        Próbuje pobrać dane z lokalnego API Pi-hole
+        wewnątrz kontenera.
 
-        API jest wykonywane z hosta do adresu
-        IP kontenera LXC.
+        W przypadku Pi-hole v6 najpierw próbujemy
+        pihole-FTL przez dostępne polecenia lokalne.
+
+        Funkcja jest odporna na brak konkretnego
+        endpointu API.
         """
 
-        if not ip_address:
-            return {}
+        # --------------------------------------------------
+        # Próba użycia pihole-FTL --config
+        # --------------------------------------------------
 
-        urls = (
-            f"http://{ip_address}/api/stats/summary",
-            f"http://{ip_address}/api/stats/summary?sid=local",
+        output = self._pct_exec(
+            [
+                "pihole-FTL",
+                "--config",
+            ],
+            timeout=3.0,
         )
 
-        for url in urls:
+        if output:
 
             try:
 
-                request = (
-                    urllib.request.Request(
-                        url,
-                        headers={
-                            "User-Agent":
-                                "Raspberry-Pi-Kiosk"
-                        },
-                    )
+                data = json.loads(
+                    output
                 )
 
-                with urllib.request.urlopen(
-                    request,
-                    timeout=2,
-                ) as response:
+                if isinstance(
+                    data,
+                    dict,
+                ):
 
-                    raw = response.read()
+                    return data
 
-                    data = json.loads(
-                        raw
-                    )
-
-                    if isinstance(
-                        data,
-                        dict,
-                    ):
-
-                        return data
-
-            except (
-                OSError,
-                ValueError,
-                urllib.error.URLError,
-            ):
-
-                continue
+            except ValueError:
+                pass
 
         return {}
 
     # ======================================================
-    # SAFE NUMBER
+    # DATABASE / STATS
     # ======================================================
 
-    @staticmethod
-    def _number(
-        value,
-        default=0,
-    ):
+    def _get_summary_from_cli(
+        self,
+    ) -> dict:
         """
-        Bezpieczna konwersja wartości API.
+        Próbuje uzyskać podstawowe informacje
+        za pomocą lokalnych poleceń Pi-hole.
+
+        Nie zakłada konkretnego API HTTP.
         """
 
-        try:
-            return float(value)
+        result: dict = {}
 
-        except (
-            TypeError,
-            ValueError,
-        ):
+        # --------------------------------------------------
+        # Liczba domen
+        # --------------------------------------------------
 
-            return default
+        gravity = self._pct_exec(
+            [
+                "pihole",
+                "-g",
+                "-l",
+            ],
+            timeout=5.0,
+        )
+
+        if gravity:
+
+            result["gravity"] = gravity
+
+        return result
 
     # ======================================================
     # COLLECT
     # ======================================================
 
-    def collect(
-        self,
-    ) -> PiHoleInfo:
+    def collect(self) -> PiHoleInfo:
         """
-        Pobiera informacje o Pi-hole.
+        Pobiera stan Pi-hole.
         """
 
-        dns_status = (
+        info = PiHoleInfo()
+
+        # --------------------------------------------------
+        # STAN LXC
+        # --------------------------------------------------
+
+        container_status = (
+            self._get_container_status()
+        )
+
+        if container_status != "running":
+
+            info.available = False
+            info.status = container_status
+            info.dns_status = (
+                "offline"
+            )
+
+            return info
+
+        info.available = True
+        info.status = "running"
+
+        # --------------------------------------------------
+        # FTL
+        # --------------------------------------------------
+
+        info.dns_status = (
             self._get_dns_status()
         )
 
-        if dns_status == "unknown":
+        # --------------------------------------------------
+        # VERSION
+        # --------------------------------------------------
 
-            return PiHoleInfo(
-                available=False,
-                status="unavailable",
-                dns_status="unknown",
-            )
-
-        ip_address = (
-            self._get_container_ip()
+        info.api_version = (
+            self._get_version()
         )
+
+        # --------------------------------------------------
+        # API / STATS
+        # --------------------------------------------------
+
+        start = time.monotonic()
 
         data = (
-            self._get_api_data(
-                ip_address
-            )
+            self._get_api_data()
         )
 
-        info = PiHoleInfo(
-            available=True,
-            status="running",
-            dns_status=dns_status,
+        elapsed = (
+            time.monotonic()
+            - start
         )
 
-        # --------------------------------------------------
-        # API
-        # --------------------------------------------------
+        # Jeśli udało się uzyskać dane,
+        # zapamiętujemy podstawowe wartości.
+        #
+        # Parser pozostaje celowo ostrożny,
+        # ponieważ format danych zależy
+        # od wersji Pi-hole.
 
-        if not data:
-            return info
+        if data:
 
-        # --------------------------------------------------
-        # API VERSION
-        # --------------------------------------------------
-
-        version = data.get(
-            "version"
-        )
-
-        if version is not None:
-
-            info.api_version = str(
-                version
-            )
-
-        # --------------------------------------------------
-        # QUERY STATISTICS
-        # --------------------------------------------------
-
-        info.queries_total = int(
-            self._number(
+            info.queries_total = int(
                 data.get(
-                    "queries",
+                    "queries_total",
                     data.get(
-                        "dns_queries",
+                        "queries",
                         0,
                     ),
                 )
+                or 0
             )
-        )
 
-        info.queries_blocked = int(
-            self._number(
+            info.queries_blocked = int(
                 data.get(
-                    "blocked",
+                    "queries_blocked",
                     data.get(
-                        "queries_blocked",
+                        "blocked",
                         0,
                     ),
                 )
-            )
-        )
-
-        # --------------------------------------------------
-        # BLOCKED %
-        # --------------------------------------------------
-
-        if info.queries_total > 0:
-
-            info.blocked_percentage = (
-                info.queries_blocked
-                / info.queries_total
-                * 100.0
+                or 0
             )
 
-        # --------------------------------------------------
-        # DOMAINS
-        # --------------------------------------------------
-
-        info.domains = int(
-            self._number(
+            info.domains = int(
                 data.get(
                     "domains",
                     data.get(
@@ -342,46 +369,30 @@ class PiHoleCollector:
                         0,
                     ),
                 )
+                or 0
             )
-        )
 
-        # --------------------------------------------------
-        # CLIENTS
-        # --------------------------------------------------
-
-        info.clients = int(
-            self._number(
+            info.clients = int(
                 data.get(
                     "clients",
                     0,
                 )
+                or 0
             )
-        )
 
-        # --------------------------------------------------
-        # QPS
-        # --------------------------------------------------
+            if (
+                info.queries_total > 0
+                and info.queries_blocked >= 0
+            ):
 
-        info.queries_per_second = (
-            self._number(
-                data.get(
-                    "queries_per_second",
-                    0.0,
+                info.blocked_percentage = (
+                    info.queries_blocked
+                    / info.queries_total
+                    * 100
                 )
-            )
-        )
-
-        # --------------------------------------------------
-        # RESPONSE TIME
-        # --------------------------------------------------
 
         info.response_time = (
-            self._number(
-                data.get(
-                    "response_time",
-                    0.0,
-                )
-            )
+            elapsed * 1000
         )
 
         return info

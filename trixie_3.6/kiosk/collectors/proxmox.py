@@ -1,25 +1,28 @@
 """
-Monitoring lokalnego Proxmox VE.
+collectors/proxmox.py
 
-Architektura systemu:
+Monitoring lokalnego Proxmox VE 9.
 
-    Debian Trixie
-        │
-        └── Proxmox VE 9
-                │
-                └── LXC CT100
-                        │
-                        └── Pi-hole
+Architektura:
 
-Collector korzysta wyłącznie z lokalnych
-poleceń Proxmox:
+    Raspberry Pi 5
+        |
+        +-- Debian Trixie
+              |
+              +-- Proxmox VE 9
+                    |
+                    +-- LXC CT100
+                          |
+                          +-- Pi-hole
+
+Collector korzysta z lokalnych poleceń:
 
     pveversion
-    pct list
     pct status
     pct config
+    pct exec
 
-Nie wykonuje operacji modyfikujących system.
+Nie korzysta z API HTTP Proxmoxa.
 """
 
 from __future__ import annotations
@@ -37,11 +40,11 @@ from models import (
 
 class ProxmoxCollector:
     """
-    Kolektor informacji o lokalnym Proxmox VE.
+    Kolektor lokalnego Proxmox VE.
     """
 
     # ======================================================
-    # EXECUTE COMMAND
+    # RUN COMMAND
     # ======================================================
 
     @staticmethod
@@ -50,7 +53,7 @@ class ProxmoxCollector:
         timeout: float = 2.0,
     ) -> str:
         """
-        Bezpiecznie wykonuje lokalne polecenie.
+        Wykonuje lokalne polecenie.
         """
 
         try:
@@ -60,8 +63,12 @@ class ProxmoxCollector:
                 capture_output=True,
                 text=True,
                 timeout=timeout,
-                check=False,
             )
+
+            if result.returncode != 0:
+                return ""
+
+            return result.stdout.strip()
 
         except (
             OSError,
@@ -70,20 +77,13 @@ class ProxmoxCollector:
 
             return ""
 
-        if result.returncode != 0:
-            return ""
-
-        return result.stdout.strip()
-
     # ======================================================
     # VERSION
     # ======================================================
 
-    def _get_version(
-        self,
-    ) -> str:
+    def _get_version(self) -> str:
         """
-        Odczytuje wersję pve-manager.
+        Pobiera wersję Proxmoxa.
         """
 
         output = self._run(
@@ -98,6 +98,8 @@ class ProxmoxCollector:
 
         for line in output.splitlines():
 
+            line = line.strip()
+
             if line.startswith(
                 "pve-manager:"
             ):
@@ -110,19 +112,26 @@ class ProxmoxCollector:
         return ""
 
     # ======================================================
-    # NODE
+    # NODE STATUS
     # ======================================================
 
-    @staticmethod
-    def _get_node() -> str:
+    def _get_node_status(self) -> str:
         """
-        Nazwa noda Proxmox.
+        Sprawdza stan usługi pvedaemon.
         """
 
-        return (
-            config.PROXMOX_NODE
-            or socket.gethostname()
+        output = self._run(
+            [
+                "systemctl",
+                "is-active",
+                "pvedaemon",
+            ]
         )
+
+        if output:
+            return output
+
+        return "unknown"
 
     # ======================================================
     # CONTAINER STATUS
@@ -132,9 +141,6 @@ class ProxmoxCollector:
         self,
         vmid: int,
     ) -> str:
-        """
-        Pobiera status kontenera.
-        """
 
         output = self._run(
             [
@@ -144,12 +150,15 @@ class ProxmoxCollector:
             ]
         )
 
-        output = output.lower()
+        if not output:
+            return "unknown"
 
-        if "running" in output:
+        text = output.lower()
+
+        if "running" in text:
             return "running"
 
-        if "stopped" in output:
+        if "stopped" in text:
             return "stopped"
 
         return "unknown"
@@ -162,9 +171,6 @@ class ProxmoxCollector:
         self,
         vmid: int,
     ) -> str:
-        """
-        Pobiera hostname kontenera.
-        """
 
         output = self._run(
             [
@@ -173,6 +179,9 @@ class ProxmoxCollector:
                 str(vmid),
             ]
         )
+
+        if not output:
+            return f"CT{vmid}"
 
         for line in output.splitlines():
 
@@ -195,9 +204,6 @@ class ProxmoxCollector:
         self,
         vmid: int,
     ) -> ProxmoxContainerInfo:
-        """
-        Pobiera podstawowe informacje o LXC.
-        """
 
         status = (
             self._get_container_status(
@@ -218,128 +224,48 @@ class ProxmoxCollector:
         )
 
     # ======================================================
-    # ALL CONTAINERS
-    # ======================================================
-
-    def _get_containers(
-        self,
-    ) -> list[
-        ProxmoxContainerInfo
-    ]:
-        """
-        Pobiera listę wszystkich LXC.
-
-        pct list ma postać tabelaryczną:
-
-            VMID Status Name
-        """
-
-        output = self._run(
-            [
-                "pct",
-                "list",
-            ]
-        )
-
-        if not output:
-            return []
-
-        containers = []
-
-        lines = output.splitlines()
-
-        for line in lines:
-
-            line = line.strip()
-
-            if not line:
-                continue
-
-            if line.lower().startswith(
-                "vmid"
-            ):
-                continue
-
-            parts = line.split()
-
-            if len(parts) < 3:
-                continue
-
-            try:
-
-                vmid = int(
-                    parts[0]
-                )
-
-            except ValueError:
-
-                continue
-
-            status = (
-                parts[1].lower()
-            )
-
-            name = " ".join(
-                parts[2:]
-            )
-
-            containers.append(
-                ProxmoxContainerInfo(
-                    vmid=vmid,
-                    name=name,
-                    status=status,
-                )
-            )
-
-        return containers
-
-    # ======================================================
     # COLLECT
     # ======================================================
 
-    def collect(
-        self,
-    ) -> ProxmoxInfo:
+    def collect(self) -> ProxmoxInfo:
         """
-        Pobiera stan lokalnego Proxmox VE.
+        Pobiera stan Proxmoxa i CT Pi-hole.
         """
 
-        node = self._get_node()
+        node = (
+            config.PROXMOX_NODE
+            or socket.gethostname()
+        )
 
         version = (
             self._get_version()
         )
 
+        # Brak pveversion oznacza,
+        # że Proxmox nie jest dostępny.
         if not version:
 
             return ProxmoxInfo(
                 available=False,
+                status="unknown",
                 node=node,
-                status="unavailable",
             )
 
-        containers = (
-            self._get_containers()
+        status = (
+            self._get_node_status()
         )
 
-        pihole = None
-
-        for container in containers:
-
-            if (
-                container.vmid
-                == config.PIHOLE_CTID
-            ):
-
-                pihole = container
-                break
+        pihole = (
+            self._get_container(
+                config.PIHOLE_CTID
+            )
+        )
 
         return ProxmoxInfo(
             available=True,
-            status="running",
+            status=status,
             node=node,
             version=version,
-            containers=containers,
             pihole=pihole,
         )
 

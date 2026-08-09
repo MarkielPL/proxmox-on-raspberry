@@ -1,18 +1,19 @@
 """
-Odczyt informacji o systemie Linux.
+collectors/system.py
 
-Moduł pobiera:
+Monitoring ogólnego stanu systemu Debian Trixie.
 
-- hostname,
-- kernel,
-- system operacyjny,
-- architekturę,
-- uptime,
-- czas uruchomienia,
-- liczbę procesów,
-- load average.
+Collector odpowiada za:
+    - hostname,
+    - kernel,
+    - system operacyjny,
+    - architekturę,
+    - uptime,
+    - czas uruchomienia,
+    - liczbę procesów,
+    - load average.
 
-Nie tworzy paneli Rich.
+Nie zawiera logiki UI.
 """
 
 from __future__ import annotations
@@ -36,12 +37,14 @@ class SystemCollector:
     # ======================================================
 
     @staticmethod
-    def operating_system() -> str:
+    def _get_operating_system() -> str:
         """
         Odczytuje nazwę systemu z /etc/os-release.
         """
 
         path = "/etc/os-release"
+
+        values: dict[str, str] = {}
 
         try:
 
@@ -53,46 +56,57 @@ class SystemCollector:
 
                 for line in file:
 
-                    if line.startswith(
-                        "PRETTY_NAME="
-                    ):
+                    line = line.strip()
 
-                        return (
-                            line.split(
-                                "=",
-                                1,
-                            )[1]
-                            .strip()
-                            .strip('"')
+                    if not line or "=" not in line:
+                        continue
+
+                    key, value = (
+                        line.split(
+                            "=",
+                            1,
                         )
+                    )
+
+                    values[key] = (
+                        value.strip('"')
+                    )
 
         except OSError:
 
-            pass
+            return platform.system()
 
-        return platform.system()
+        return (
+            values.get("PRETTY_NAME")
+            or values.get("NAME")
+            or platform.system()
+        )
 
     # ======================================================
     # UPTIME
     # ======================================================
 
     @staticmethod
-    def uptime() -> int:
+    def _get_uptime() -> int:
         """
-        Zwraca uptime systemu w sekundach.
+        Czas pracy systemu w sekundach.
         """
 
         try:
 
-            return int(
-                time.time()
-                - psutil.boot_time()
+            boot_time = (
+                psutil.boot_time()
             )
 
-        except (
-            OSError,
-            ValueError,
-        ):
+            return max(
+                0,
+                int(
+                    time.time()
+                    - boot_time
+                ),
+            )
+
+        except OSError:
 
             return 0
 
@@ -101,9 +115,9 @@ class SystemCollector:
     # ======================================================
 
     @staticmethod
-    def process_count() -> int:
+    def _get_process_count() -> int:
         """
-        Zwraca liczbę procesów.
+        Liczba procesów widocznych dla psutil.
         """
 
         try:
@@ -121,13 +135,13 @@ class SystemCollector:
     # ======================================================
 
     @staticmethod
-    def load_average() -> tuple[
+    def _get_load() -> tuple[
         float,
         float,
         float,
     ]:
         """
-        Zwraca load average.
+        Pobiera load average.
         """
 
         try:
@@ -148,76 +162,44 @@ class SystemCollector:
 
     def collect(self) -> SystemInfo:
         """
-        Pobiera komplet informacji systemowych.
+        Pobiera komplet informacji o systemie.
         """
 
         info = SystemInfo()
-
-        # --------------------------------------------------
-        # Hostname
-        # --------------------------------------------------
 
         info.hostname = (
             platform.node()
         )
 
-        # --------------------------------------------------
-        # Kernel
-        # --------------------------------------------------
-
         info.kernel = (
             platform.release()
         )
 
-        # --------------------------------------------------
-        # OS
-        # --------------------------------------------------
-
         info.operating_system = (
-            self.operating_system()
+            self._get_operating_system()
         )
-
-        # --------------------------------------------------
-        # Architecture
-        # --------------------------------------------------
 
         info.architecture = (
             platform.machine()
         )
 
-        # --------------------------------------------------
-        # Boot time
-        # --------------------------------------------------
+        info.uptime = (
+            self._get_uptime()
+        )
 
         info.boot_time = (
             psutil.boot_time()
         )
 
-        # --------------------------------------------------
-        # Uptime
-        # --------------------------------------------------
-
-        info.uptime = (
-            self.uptime()
-        )
-
-        # --------------------------------------------------
-        # Process count
-        # --------------------------------------------------
-
         info.process_count = (
-            self.process_count()
+            self._get_process_count()
         )
-
-        # --------------------------------------------------
-        # Load average
-        # --------------------------------------------------
 
         (
             info.load_1m,
             info.load_5m,
             info.load_15m,
-        ) = self.load_average()
+        ) = self._get_load()
 
         return info
 
@@ -225,6 +207,5 @@ class SystemCollector:
 # ==========================================================
 # GLOBALNY COLLECTOR
 # ==========================================================
-
 
 system_collector = SystemCollector()

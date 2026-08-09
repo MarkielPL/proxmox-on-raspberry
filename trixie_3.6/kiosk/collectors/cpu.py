@@ -1,36 +1,58 @@
 """
 collectors/cpu.py
 
-Odczyt informacji o procesorze.
+Odczyt informacji o procesorze Raspberry Pi.
 
-Moduł odpowiada wyłącznie za pobieranie danych
-dotyczących CPU.
+Collector odpowiada wyłącznie za pobieranie danych CPU.
 
-Nie tworzy paneli Rich.
-Nie wykonuje formatowania tekstu.
+Nie zawiera:
+    - kodu Rich,
+    - paneli,
+    - formatowania UI,
+    - logiki dashboardu.
+
+Źródła danych:
+    - psutil
+    - /proc/cpuinfo
+    - /sys/devices/system/cpu/
 """
 
 from __future__ import annotations
 
 import os
 import platform
+from pathlib import Path
 
 import psutil
 
 from models import CPUInfo
 
 
+# ==========================================================
+# CPU COLLECTOR
+# ==========================================================
+
 class CpuCollector:
     """
     Kolektor informacji o procesorze.
     """
 
+    GOVERNOR_PATH = Path(
+        "/sys/devices/system/cpu/"
+        "cpu0/cpufreq/scaling_governor"
+    )
+
+    # ------------------------------------------------------
+    # INIT
+    # ------------------------------------------------------
+
     def __init__(self) -> None:
         """
-        Inicjalizacja pomiarów CPU.
+        Inicjalizacja collectora.
 
         Pierwszy pomiar psutil.cpu_percent()
-        jest inicjalizacyjny.
+        nie posiada jeszcze poprzedniego punktu
+        odniesienia, dlatego wykonujemy go tutaj.
         """
 
         psutil.cpu_percent(
@@ -44,46 +66,34 @@ class CpuCollector:
 
     def collect(self) -> CPUInfo:
         """
-        Pobiera komplet informacji o CPU.
+        Pobiera kompletny stan CPU.
         """
 
         info = CPUInfo()
 
         # --------------------------------------------------
-        # UŻYCIE CPU
+        # Użycie CPU
         # --------------------------------------------------
 
-        per_core = psutil.cpu_percent(
+        info.usage = psutil.cpu_percent(
+            interval=None
+        )
+
+        info.per_core = psutil.cpu_percent(
             interval=None,
             percpu=True,
         )
 
-        info.per_core = per_core
+        # --------------------------------------------------
+        # Liczba rdzeni
+        # --------------------------------------------------
 
-        if per_core:
-
-            info.usage = (
-                sum(per_core)
-                / len(per_core)
-            )
-
-        info.core_count = len(
-            per_core
+        info.core_count = (
+            len(info.per_core)
         )
 
         # --------------------------------------------------
-        # LICZBA FIZYCZNYCH RDZENI
-        # --------------------------------------------------
-
-        info.physical_core_count = (
-            psutil.cpu_count(
-                logical=False
-            )
-            or 0
-        )
-
-        # --------------------------------------------------
-        # CZĘSTOTLIWOŚĆ
+        # Częstotliwość
         # --------------------------------------------------
 
         frequency = psutil.cpu_freq()
@@ -103,148 +113,24 @@ class CpuCollector:
             )
 
         # --------------------------------------------------
-        # LOAD AVERAGE
+        # Load average
         # --------------------------------------------------
 
         try:
 
-            (
-                info.load_1m,
-                info.load_5m,
-                info.load_15m,
-            ) = os.getloadavg()
+            load1, load5, load15 = (
+                os.getloadavg()
+            )
+
+            info.load_1m = load1
+            info.load_5m = load5
+            info.load_15m = load15
 
         except OSError:
 
             pass
-
-        # --------------------------------------------------
-        # ARCHITEKTURA
-        # --------------------------------------------------
-
-        info.architecture = (
-            platform.machine()
-        )
-
-        # --------------------------------------------------
-        # NAZWA CPU
-        # --------------------------------------------------
-
-        info.processor_name = (
-            self.processor_name()
-        )
-
-        # --------------------------------------------------
-        # GOVERNOR
-        # --------------------------------------------------
-
-        info.governor = (
-            self.cpu_governor()
-        )
-
-        # --------------------------------------------------
-        # STATYSTYKI
-        # --------------------------------------------------
-
-        stats = psutil.cpu_stats()
-
-        info.ctx_switches = (
-            stats.ctx_switches
-        )
-
-        info.interrupts = (
-            stats.interrupts
-        )
-
-        info.soft_interrupts = (
-            stats.soft_interrupts
-        )
-
-        info.syscalls = (
-            stats.syscalls
-        )
 
         return info
-
-    # ======================================================
-    # PROCESSOR NAME
-    # ======================================================
-
-    @staticmethod
-    def processor_name() -> str:
-        """
-        Odczytuje nazwę/model procesora.
-        """
-
-        name = (
-            platform.processor()
-        )
-
-        if name:
-            return name
-
-        try:
-
-            with open(
-                "/proc/cpuinfo",
-                "r",
-                encoding="utf-8",
-            ) as cpuinfo:
-
-                for line in cpuinfo:
-
-                    if (
-                        line.startswith(
-                            "Model"
-                        )
-                        or line.startswith(
-                            "model name"
-                        )
-                    ):
-
-                        return line.split(
-                            ":",
-                            1,
-                        )[1].strip()
-
-        except (
-            OSError,
-            IndexError,
-        ):
-
-            pass
-
-        return "Unknown"
-
-    # ======================================================
-    # GOVERNOR
-    # ======================================================
-
-    @staticmethod
-    def cpu_governor() -> str:
-        """
-        Aktualny governor CPU.
-        """
-
-        path = (
-            "/sys/devices/system/cpu/"
-            "cpu0/cpufreq/"
-            "scaling_governor"
-        )
-
-        try:
-
-            with open(
-                path,
-                "r",
-                encoding="utf-8",
-            ) as governor:
-
-                return governor.read().strip()
-
-        except OSError:
-
-            return "unknown"
 
     # ======================================================
     # LOGICAL CORES
@@ -253,11 +139,13 @@ class CpuCollector:
     @staticmethod
     def logical_cores() -> int:
         """
-        Liczba logicznych rdzeni.
+        Zwraca liczbę logicznych rdzeni CPU.
         """
 
         return (
-            psutil.cpu_count()
+            psutil.cpu_count(
+                logical=True
+            )
             or 0
         )
 
@@ -268,7 +156,7 @@ class CpuCollector:
     @staticmethod
     def physical_cores() -> int:
         """
-        Liczba fizycznych rdzeni.
+        Zwraca liczbę fizycznych rdzeni CPU.
         """
 
         return (
@@ -285,41 +173,124 @@ class CpuCollector:
     @staticmethod
     def architecture() -> str:
         """
-        Architektura CPU.
+        Zwraca architekturę systemu.
         """
 
         return platform.machine()
 
     # ======================================================
-    # FREQUENCY
+    # PROCESSOR NAME
+    # ======================================================
+
+    @staticmethod
+    def processor_name() -> str:
+        """
+        Próbuje ustalić nazwę procesora.
+
+        Raspberry Pi nie zawsze zwraca nazwę
+        przez platform.processor(), dlatego
+        dodatkowo analizowany jest /proc/cpuinfo.
+        """
+
+        name = platform.processor()
+
+        if name:
+
+            return name
+
+        try:
+
+            with open(
+                "/proc/cpuinfo",
+                "r",
+                encoding="utf-8",
+            ) as cpuinfo:
+
+                for line in cpuinfo:
+
+                    if line.lower().startswith(
+                        "model"
+                    ):
+
+                        if ":" in line:
+
+                            return (
+                                line.split(
+                                    ":",
+                                    1,
+                                )[1]
+                                .strip()
+                            )
+
+        except OSError:
+
+            pass
+
+        return "Unknown"
+
+    # ======================================================
+    # CPU GOVERNOR
+    # ======================================================
+
+    @classmethod
+    def cpu_governor(cls) -> str:
+        """
+        Zwraca aktualny governor CPU.
+
+        Przykładowe wartości:
+
+            performance
+            powersave
+            ondemand
+            schedutil
+        """
+
+        try:
+
+            return (
+                cls.GOVERNOR_PATH
+                .read_text(
+                    encoding="utf-8"
+                )
+                .strip()
+            )
+
+        except OSError:
+
+            return "unknown"
+
+    # ======================================================
+    # MIN FREQUENCY
     # ======================================================
 
     @staticmethod
     def cpu_min_frequency() -> float:
         """
-        Minimalna częstotliwość CPU.
+        Zwraca minimalną częstotliwość CPU w MHz.
         """
 
-        frequency = (
-            psutil.cpu_freq()
-        )
+        frequency = psutil.cpu_freq()
 
         if frequency is None:
+
             return 0.0
 
         return frequency.min
 
+    # ======================================================
+    # MAX FREQUENCY
+    # ======================================================
+
     @staticmethod
     def cpu_max_frequency() -> float:
         """
-        Maksymalna częstotliwość CPU.
+        Zwraca maksymalną częstotliwość CPU w MHz.
         """
 
-        frequency = (
-            psutil.cpu_freq()
-        )
+        frequency = psutil.cpu_freq()
 
         if frequency is None:
+
             return 0.0
 
         return frequency.max
@@ -329,25 +300,29 @@ class CpuCollector:
     # ======================================================
 
     @staticmethod
-    def cpu_stats() -> dict:
+    def cpu_stats() -> dict[str, int]:
         """
-        Statystyki CPU.
+        Zwraca statystyki CPU.
+
+        Dane mogą zostać wykorzystane później
+        przez panel diagnostyczny.
         """
 
         stats = psutil.cpu_stats()
 
         return {
-            "ctx_switches":
-                stats.ctx_switches,
-
-            "interrupts":
-                stats.interrupts,
-
-            "soft_interrupts":
-                stats.soft_interrupts,
-
-            "syscalls":
-                stats.syscalls,
+            "ctx_switches": (
+                stats.ctx_switches
+            ),
+            "interrupts": (
+                stats.interrupts
+            ),
+            "soft_interrupts": (
+                stats.soft_interrupts
+            ),
+            "syscalls": (
+                stats.syscalls
+            ),
         }
 
     # ======================================================
@@ -355,22 +330,34 @@ class CpuCollector:
     # ======================================================
 
     @staticmethod
-    def cpu_times() -> dict:
+    def cpu_times() -> dict[str, float]:
         """
-        Czasy CPU.
+        Zwraca podstawowe czasy CPU.
         """
 
         times = psutil.cpu_times()
 
         return {
-            "user": times.user,
-            "system": times.system,
-            "idle": times.idle,
+            "user": getattr(
+                times,
+                "user",
+                0.0,
+            ),
+            "system": getattr(
+                times,
+                "system",
+                0.0,
+            ),
+            "idle": getattr(
+                times,
+                "idle",
+                0.0,
+            ),
         }
 
 
 # ==========================================================
-# GLOBALNY COLLECTOR
+# GLOBAL COLLECTOR
 # ==========================================================
 
 cpu_collector = CpuCollector()

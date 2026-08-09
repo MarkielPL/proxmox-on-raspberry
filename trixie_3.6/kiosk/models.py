@@ -1,14 +1,15 @@
 """
+models.py
+
 Modele danych Raspberry Pi Kiosk Dashboard.
 
-Ten moduł zawiera wyłącznie struktury danych.
+Moduł zawiera wyłącznie struktury danych.
 
 Nie wykonuje:
     - odczytów systemowych,
-    - wywołań subprocess,
-    - komunikacji sieciowej,
-    - formatowania Rich,
-    - logiki dashboardu.
+    - komunikacji z Proxmox,
+    - komunikacji z Pi-hole,
+    - formatowania Rich.
 
 Architektura:
 
@@ -32,7 +33,6 @@ from dataclasses import dataclass, field
 # CPU
 # ==========================================================
 
-
 @dataclass
 class CPUInfo:
     """
@@ -51,6 +51,8 @@ class CPUInfo:
 
     frequency_max: float = 0.0
 
+    temperature: float = 0.0
+
     load_1m: float = 0.0
 
     load_5m: float = 0.0
@@ -59,7 +61,7 @@ class CPUInfo:
 
     core_count: int = 0
 
-    physical_core_count: int = 0
+    physical_cores: int = 0
 
     architecture: str = ""
 
@@ -67,7 +69,7 @@ class CPUInfo:
 
     governor: str = ""
 
-    ctx_switches: int = 0
+    context_switches: int = 0
 
     interrupts: int = 0
 
@@ -75,11 +77,16 @@ class CPUInfo:
 
     syscalls: int = 0
 
+    user_time: float = 0.0
+
+    system_time: float = 0.0
+
+    idle_time: float = 0.0
+
 
 # ==========================================================
 # RAM
 # ==========================================================
-
 
 @dataclass
 class MemoryInfo:
@@ -101,11 +108,18 @@ class MemoryInfo:
 
     buffers: int = 0
 
+    swap_total: int = 0
+
+    swap_used: int = 0
+
+    swap_free: int = 0
+
+    swap_percent: float = 0.0
+
 
 # ==========================================================
 # SWAP
 # ==========================================================
-
 
 @dataclass
 class SwapInfo:
@@ -125,7 +139,6 @@ class SwapInfo:
 # ==========================================================
 # TEMPERATURE
 # ==========================================================
-
 
 @dataclass
 class TemperatureInfo:
@@ -148,9 +161,7 @@ class TemperaturesInfo:
     Zbiorczy stan czujników temperatury.
     """
 
-    sensors: list[
-        TemperatureInfo
-    ] = field(
+    sensors: list[TemperatureInfo] = field(
         default_factory=list
     )
 
@@ -166,7 +177,6 @@ class TemperaturesInfo:
 # ==========================================================
 # NETWORK
 # ==========================================================
-
 
 @dataclass
 class NetworkInfo:
@@ -203,7 +213,6 @@ class NetworkInfo:
 # STORAGE
 # ==========================================================
 
-
 @dataclass
 class DiskInfo:
     """
@@ -230,9 +239,8 @@ class DiskInfo:
 
 
 # ==========================================================
-# NVMe
+# NVME
 # ==========================================================
-
 
 @dataclass
 class NvmeInfo:
@@ -273,11 +281,18 @@ class NvmeInfo:
 # FAN / COOLING
 # ==========================================================
 
-
 @dataclass
 class FanInfo:
     """
     Informacje o wentylatorze PWM.
+
+    Przykładowy sprzęt wykryty na Raspberry Pi:
+
+        hwmon3
+        ├── name: pwmfan
+        ├── fan1_input: 2948
+        ├── pwm1: 75
+        └── pwm1_enable: 1
     """
 
     available: bool = False
@@ -298,41 +313,8 @@ class FanInfo:
 
 
 # ==========================================================
-# SYSTEM
-# ==========================================================
-
-
-@dataclass
-class SystemInfo:
-    """
-    Informacje ogólne o systemie.
-    """
-
-    hostname: str = ""
-
-    kernel: str = ""
-
-    operating_system: str = ""
-
-    architecture: str = ""
-
-    uptime: int = 0
-
-    boot_time: float = 0.0
-
-    process_count: int = 0
-
-    load_1m: float = 0.0
-
-    load_5m: float = 0.0
-
-    load_15m: float = 0.0
-
-
-# ==========================================================
 # PROXMOX CONTAINER
 # ==========================================================
-
 
 @dataclass
 class ProxmoxContainerInfo:
@@ -370,7 +352,6 @@ class ProxmoxContainerInfo:
 # ==========================================================
 # PROXMOX
 # ==========================================================
-
 
 @dataclass
 class ProxmoxInfo:
@@ -411,7 +392,6 @@ class ProxmoxInfo:
 # PI-HOLE
 # ==========================================================
 
-
 @dataclass
 class PiHoleInfo:
     """
@@ -442,69 +422,67 @@ class PiHoleInfo:
 
 
 # ==========================================================
-# DASHBOARD STATE
+# SYSTEM
 # ==========================================================
 
+@dataclass
+class SystemInfo:
+    """
+    Informacje ogólne o systemie.
+    """
+
+    hostname: str = ""
+
+    kernel: str = ""
+
+    operating_system: str = ""
+
+    architecture: str = ""
+
+    uptime: int = 0
+
+    boot_time: float = 0.0
+
+    process_count: int = 0
+
+    load_1m: float = 0.0
+
+    load_5m: float = 0.0
+
+    load_15m: float = 0.0
+
+
+# ==========================================================
+# DASHBOARD STATE
+# ==========================================================
 
 @dataclass
 class DashboardState:
     """
     Kompletny stan dashboardu.
 
-    Jest to główny obiekt przekazywany
-    z warstwy services do warstwy UI.
+    Jest to główny obiekt przekazywany pomiędzy
+    warstwą zbierającą dane a warstwą prezentacji.
 
-    Panele nie wykonują bezpośrednich
-    odczytów systemowych.
+    Panele nie wykonują bezpośrednich odczytów
+    systemowych.
     """
-
-    # ------------------------------------------------------
-    # SYSTEM
-    # ------------------------------------------------------
-
-    system: SystemInfo = field(
-        default_factory=SystemInfo
-    )
-
-    # ------------------------------------------------------
-    # CPU
-    # ------------------------------------------------------
 
     cpu: CPUInfo = field(
         default_factory=CPUInfo
     )
 
-    # ------------------------------------------------------
-    # MEMORY
-    # ------------------------------------------------------
-
     memory: MemoryInfo = field(
         default_factory=MemoryInfo
     )
-
-    swap: SwapInfo = field(
-        default_factory=SwapInfo
-    )
-
-    # ------------------------------------------------------
-    # TEMPERATURE
-    # ------------------------------------------------------
 
     temperatures: TemperaturesInfo = field(
         default_factory=TemperaturesInfo
     )
 
-    # ------------------------------------------------------
-    # NETWORK
-    # ------------------------------------------------------
-
     network: NetworkInfo = field(
         default_factory=NetworkInfo
     )
-
-    # ------------------------------------------------------
-    # STORAGE
-    # ------------------------------------------------------
 
     disks: list[DiskInfo] = field(
         default_factory=list
@@ -514,35 +492,25 @@ class DashboardState:
         default_factory=NvmeInfo
     )
 
-    # ------------------------------------------------------
-    # COOLING
-    # ------------------------------------------------------
-
     fan: FanInfo = field(
         default_factory=FanInfo
     )
 
-    # ------------------------------------------------------
-    # PROXMOX
-    # ------------------------------------------------------
+    system: SystemInfo = field(
+        default_factory=SystemInfo
+    )
 
     proxmox: ProxmoxInfo = field(
         default_factory=ProxmoxInfo
     )
 
-    # ------------------------------------------------------
-    # PI-HOLE
-    # ------------------------------------------------------
-
     pihole: PiHoleInfo = field(
         default_factory=PiHoleInfo
     )
 
-    # ======================================================
-    # CZASY AKTUALIZACJI
-    # ======================================================
-
-    system_updated: float = 0.0
+    # ------------------------------------------------------
+    # Czas ostatniej aktualizacji poszczególnych źródeł.
+    # ------------------------------------------------------
 
     cpu_updated: float = 0.0
 
@@ -558,19 +526,21 @@ class DashboardState:
 
     fan_updated: float = 0.0
 
+    system_updated: float = 0.0
+
     proxmox_updated: float = 0.0
 
     pihole_updated: float = 0.0
 
-    # ======================================================
-    # GLOBALNY CZAS
-    # ======================================================
+    # ------------------------------------------------------
+    # Globalny czas aktualizacji.
+    # ------------------------------------------------------
 
     last_update: float = 0.0
 
-    # ======================================================
-    # STAN APLIKACJI
-    # ======================================================
+    # ------------------------------------------------------
+    # Stan aplikacji.
+    # ------------------------------------------------------
 
     running: bool = True
 

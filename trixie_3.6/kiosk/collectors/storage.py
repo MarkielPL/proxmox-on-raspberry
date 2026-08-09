@@ -1,10 +1,15 @@
 """
-Odczyt informacji o systemach plików.
+collectors/storage.py
 
-Moduł wykorzystuje psutil.disk_partitions()
-oraz psutil.disk_usage().
+Monitoring systemów plików i aktywności dyskowej.
 
-Nie tworzy paneli Rich.
+Collector:
+    - wykrywa zamontowane systemy plików,
+    - pokazuje wykorzystanie przestrzeni,
+    - pomija systemy określone w config.py,
+    - mierzy aktywność I/O.
+
+Nie zawiera kodu UI.
 """
 
 from __future__ import annotations
@@ -13,157 +18,75 @@ import time
 
 import psutil
 
-from models import DiskInfo
-
 import config
+
+from models import DiskInfo
 
 
 class StorageCollector:
     """
-    Kolektor systemów plików i przestrzeni dyskowej.
+    Kolektor pamięci masowej.
     """
 
     def __init__(self) -> None:
 
-        self.previous_io = (
+        self._previous_io = (
             psutil.disk_io_counters()
         )
 
-        self.previous_time = (
+        self._previous_time = (
             time.monotonic()
         )
 
     # ======================================================
-    # DISK IO
+    # DISK USAGE
     # ======================================================
 
-    def get_io_speed(
+    def _collect_partitions(
         self,
-    ) -> tuple[float, float]:
-        """
-        Oblicza całkowitą prędkość:
+    ) -> list[DiskInfo]:
 
-            read  = bytes/s
-            write = bytes/s
-        """
+        result = []
 
-        current = (
-            psutil.disk_io_counters()
-        )
+        for partition in psutil.disk_partitions(
+            all=False
+        ):
 
-        current_time = (
-            time.monotonic()
-        )
-
-        if current is None:
-            return (
-                0.0,
-                0.0,
-            )
-
-        elapsed = (
-            current_time
-            - self.previous_time
-        )
-
-        if elapsed <= 0:
-            elapsed = 1.0
-
-        read_bytes = (
-            current.read_bytes
-            - self.previous_io.read_bytes
-        )
-
-        write_bytes = (
-            current.write_bytes
-            - self.previous_io.write_bytes
-        )
-
-        self.previous_io = current
-
-        self.previous_time = (
-            current_time
-        )
-
-        return (
-            max(
-                read_bytes / elapsed,
-                0.0,
-            ),
-            max(
-                write_bytes / elapsed,
-                0.0,
-            ),
-        )
-
-    # ======================================================
-    # FILESYSTEM FILTER
-    # ======================================================
-
-    @staticmethod
-    def is_ignored(
-        filesystem: str,
-    ) -> bool:
-        """
-        Sprawdza, czy system plików powinien
-        zostać pominięty w dashboardzie.
-        """
-
-        return (
-            filesystem
-            in config.IGNORED_FILESYSTEMS
-        )
-
-    # ======================================================
-    # COLLECT
-    # ======================================================
-
-    def collect(self) -> list[DiskInfo]:
-        """
-        Pobiera informacje o wszystkich
-        interesujących systemach plików.
-        """
-
-        disks: list[
-            DiskInfo
-        ] = []
-
-        (
-            read_speed,
-            write_speed,
-        ) = self.get_io_speed()
-
-        partitions = (
-            psutil.disk_partitions(
-                all=False
-            )
-        )
-
-        for partition in partitions:
-
-            if self.is_ignored(
+            filesystem = (
                 partition.fstype
+            )
+
+            if (
+                filesystem
+                in config.IGNORED_FILESYSTEMS
             ):
                 continue
 
-            # --------------------------------------------------
-            # Opcjonalne pominięcie /boot
-            # --------------------------------------------------
+            if (
+                not config.SHOW_TMPFS
+                and filesystem == "tmpfs"
+            ):
+                continue
+
+            mountpoint = (
+                partition.mountpoint
+            )
 
             if (
                 not config.SHOW_BOOT_PARTITION
-                and partition.mountpoint
-                in {
+                and mountpoint in (
                     "/boot",
                     "/boot/firmware",
-                }
+                )
             ):
                 continue
 
             try:
 
-                usage = psutil.disk_usage(
-                    partition.mountpoint
+                usage = (
+                    psutil.disk_usage(
+                        mountpoint
+                    )
                 )
 
             except (
@@ -173,36 +96,109 @@ class StorageCollector:
 
                 continue
 
-            disks.append(
+            result.append(
                 DiskInfo(
-                    mountpoint=(
-                        partition.mountpoint
-                    ),
-                    device=(
-                        partition.device
-                    ),
-                    filesystem=(
-                        partition.fstype
-                    ),
-                    total=(
-                        usage.total
-                    ),
-                    used=(
-                        usage.used
-                    ),
-                    free=(
-                        usage.free
-                    ),
-                    percent=(
-                        usage.percent
-                    ),
-                    read_speed=(
-                        read_speed
-                    ),
-                    write_speed=(
-                        write_speed
-                    ),
+                    mountpoint=mountpoint,
+                    device=partition.device,
+                    filesystem=filesystem,
+                    total=usage.total,
+                    used=usage.used,
+                    free=usage.free,
+                    percent=usage.percent,
                 )
+            )
+
+        return result
+
+    # ======================================================
+    # DISK IO
+    # ======================================================
+
+    def _collect_io(
+        self,
+    ) -> tuple[
+        float,
+        float,
+    ]:
+
+        current = (
+            psutil.disk_io_counters()
+        )
+
+        now = time.monotonic()
+
+        elapsed = (
+            now
+            - self._previous_time
+        )
+
+        if elapsed <= 0:
+            elapsed = 1.0
+
+        if (
+            current is None
+            or self._previous_io is None
+        ):
+
+            self._previous_io = current
+            self._previous_time = now
+
+            return (
+                0.0,
+                0.0,
+            )
+
+        read_speed = max(
+            0,
+            current.read_bytes
+            - self._previous_io.read_bytes,
+        ) / elapsed
+
+        write_speed = max(
+            0,
+            current.write_bytes
+            - self._previous_io.write_bytes,
+        ) / elapsed
+
+        self._previous_io = current
+        self._previous_time = now
+
+        return (
+            read_speed,
+            write_speed,
+        )
+
+    # ======================================================
+    # COLLECT
+    # ======================================================
+
+    def collect(self) -> list[DiskInfo]:
+        """
+        Pobiera informacje o systemach plików.
+        """
+
+        disks = (
+            self._collect_partitions()
+        )
+
+        read_speed, write_speed = (
+            self._collect_io()
+        )
+
+        # Na tym etapie pokazujemy
+        # globalną aktywność I/O.
+        #
+        # W przyszłości możemy rozbudować
+        # collector do osobnych urządzeń.
+
+        if disks:
+
+            disks[0].read_speed = (
+                read_speed
+            )
+
+            disks[0].write_speed = (
+                write_speed
             )
 
         return disks
@@ -211,6 +207,5 @@ class StorageCollector:
 # ==========================================================
 # GLOBALNY COLLECTOR
 # ==========================================================
-
 
 storage_collector = StorageCollector()

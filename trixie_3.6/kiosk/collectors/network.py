@@ -1,26 +1,19 @@
 """
-Odczyt informacji o sieci.
+collectors/network.py
 
-Moduł odpowiada wyłącznie za pobieranie danych
-sieciowych.
+Monitoring interfejsu sieciowego.
 
-Nie tworzy paneli Rich.
-Nie wykonuje formatowania tekstu.
+Collector odpowiada za:
+    - wykrywanie aktywnego interfejsu,
+    - adres IP,
+    - bramę domyślną,
+    - DNS,
+    - prędkość RX/TX,
+    - całkowity transfer,
+    - status interfejsu,
+    - ping do hosta testowego.
 
-Monitorowane są:
-
-- interfejs sieciowy,
-- adres IPv4,
-- gateway,
-- DNS,
-- RX,
-- TX,
-- prędkość pobierania,
-- prędkość wysyłania,
-- prędkość linku,
-- stan interfejsu,
-- ping,
-- dostępność Internetu.
+Nie zawiera logiki UI.
 """
 
 from __future__ import annotations
@@ -29,7 +22,6 @@ import re
 import socket
 import subprocess
 import time
-from pathlib import Path
 
 import psutil
 
@@ -44,16 +36,11 @@ class NetworkCollector:
     """
 
     def __init__(self) -> None:
-        """
-        Inicjalizacja punktu odniesienia dla pomiaru
-        prędkości RX/TX.
-        """
-
-        self.previous_counters = (
+        self._previous_counters = (
             psutil.net_io_counters()
         )
 
-        self.previous_time = (
+        self._previous_time = (
             time.monotonic()
         )
 
@@ -62,72 +49,52 @@ class NetworkCollector:
     # ======================================================
 
     @staticmethod
-    def get_primary_interface() -> str:
+    def _get_interface() -> str:
         """
-        Próbuje znaleźć główny interfejs sieciowy.
-
-        Pomijamy loopback oraz interfejsy bez adresu IPv4.
+        Próbuje znaleźć aktywny interfejs sieciowy.
         """
-
-        interfaces = psutil.net_if_addrs()
 
         stats = psutil.net_if_stats()
 
-        # Preferujemy interfejs będący UP.
-        for interface, addresses in (
-            interfaces.items()
-        ):
+        candidates = []
 
-            if interface == "lo":
+        for name, data in stats.items():
+
+            if not data.isup:
                 continue
 
-            if interface not in stats:
+            if name == "lo":
                 continue
 
-            if not stats[
-                interface
-            ].isup:
-                continue
+            candidates.append(name)
 
-            for address in addresses:
+        if not candidates:
+            return ""
 
-                if (
-                    address.family
-                    == socket.AF_INET
-                ):
+        # Preferuj Ethernet.
+        for name in candidates:
 
-                    return interface
+            if name.startswith("eth"):
+                return name
 
-        # Fallback — dowolny interfejs
-        # posiadający IPv4.
-        for interface, addresses in (
-            interfaces.items()
-        ):
+        # Następnie Wi-Fi.
+        for name in candidates:
 
-            if interface == "lo":
-                continue
+            if name.startswith("wlan"):
+                return name
 
-            for address in addresses:
-
-                if (
-                    address.family
-                    == socket.AF_INET
-                ):
-
-                    return interface
-
-        return ""
+        return candidates[0]
 
     # ======================================================
-    # IP
+    # IP ADDRESS
     # ======================================================
 
     @staticmethod
-    def get_ip_address(
+    def _get_ip_address(
         interface: str,
     ) -> str:
         """
-        Zwraca adres IPv4 wskazanego interfejsu.
+        Pobiera adres IPv4 interfejsu.
         """
 
         if not interface:
@@ -140,136 +107,52 @@ class NetworkCollector:
 
         for address in addresses:
 
-            if (
-                address.family
-                == socket.AF_INET
-            ):
+            if address.family == socket.AF_INET:
 
                 return address.address
 
         return ""
 
     # ======================================================
-    # LINK SPEED
-    # ======================================================
-
-    @staticmethod
-    def get_link_speed(
-        interface: str,
-    ) -> int:
-        """
-        Zwraca prędkość linku w Mb/s.
-
-        psutil może zwrócić 0, jeśli sterownik
-        nie udostępnia informacji.
-        """
-
-        if not interface:
-            return 0
-
-        stats = psutil.net_if_stats().get(
-            interface
-        )
-
-        if stats is None:
-            return 0
-
-        return max(
-            int(stats.speed),
-            0,
-        )
-
-    # ======================================================
-    # INTERFACE STATE
-    # ======================================================
-
-    @staticmethod
-    def is_interface_up(
-        interface: str,
-    ) -> bool:
-        """
-        Sprawdza, czy interfejs jest aktywny.
-        """
-
-        if not interface:
-            return False
-
-        stats = psutil.net_if_stats().get(
-            interface
-        )
-
-        if stats is None:
-            return False
-
-        return bool(stats.isup)
-
-    # ======================================================
     # DEFAULT GATEWAY
     # ======================================================
 
     @staticmethod
-    def get_gateway() -> str:
+    def _get_gateway() -> str:
         """
-        Odczytuje domyślną bramę z /proc/net/route.
-
-        Nie wymaga dodatkowych pakietów.
+        Pobiera bramę domyślną z systemu.
         """
-
-        path = Path(
-            "/proc/net/route"
-        )
 
         try:
 
-            lines = path.read_text(
-                encoding="utf-8"
-            ).splitlines()
+            result = subprocess.run(
+                [
+                    "ip",
+                    "route",
+                    "show",
+                    "default",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
 
-        except OSError:
+            if result.returncode != 0:
+                return ""
 
-            return ""
+            match = re.search(
+                r"default via ([0-9.]+)",
+                result.stdout,
+            )
 
-        for line in lines[1:]:
+            if match:
+                return match.group(1)
 
-            parts = line.split()
-
-            if len(parts) < 3:
-                continue
-
-            interface = parts[0]
-
-            destination = parts[1]
-
-            gateway = parts[2]
-
-            # 00000000 = default route
-            if destination != "00000000":
-                continue
-
-            try:
-
-                value = int(
-                    gateway,
-                    16,
-                )
-
-                address = socket.inet_ntoa(
-                    value.to_bytes(
-                        4,
-                        byteorder="little",
-                    )
-                )
-
-                # Interface musi istnieć.
-                if interface:
-                    return address
-
-            except (
-                ValueError,
-                OSError,
-            ):
-
-                continue
+        except (
+            OSError,
+            subprocess.SubprocessError,
+        ):
+            pass
 
         return ""
 
@@ -278,61 +161,183 @@ class NetworkCollector:
     # ======================================================
 
     @staticmethod
-    def get_dns_server() -> str:
+    def _get_dns_server() -> str:
         """
-        Odczytuje pierwszy znaleziony serwer DNS
-        z /etc/resolv.conf.
-
-        Obsługuje również wpisy:
-
-        nameserver 1.1.1.1
-        nameserver 192.168.1.1
+        Próbuje odczytać pierwszy serwer DNS.
         """
 
-        path = Path(
-            "/etc/resolv.conf"
-        )
+        path = "/etc/resolv.conf"
 
         try:
 
-            lines = path.read_text(
-                encoding="utf-8"
-            ).splitlines()
+            with open(
+                path,
+                "r",
+                encoding="utf-8",
+            ) as file:
+
+                for line in file:
+
+                    line = line.strip()
+
+                    if not line.startswith(
+                        "nameserver"
+                    ):
+                        continue
+
+                    parts = line.split()
+
+                    if len(parts) >= 2:
+                        return parts[1]
 
         except OSError:
-
-            return ""
-
-        for line in lines:
-
-            line = line.strip()
-
-            if not line.startswith(
-                "nameserver"
-            ):
-                continue
-
-            parts = line.split()
-
-            if len(parts) >= 2:
-
-                return parts[1]
+            pass
 
         return ""
 
     # ======================================================
-    # SPEED
+    # LINK SPEED
     # ======================================================
 
-    def get_speed(
-        self,
-    ) -> tuple[float, float]:
+    @staticmethod
+    def _get_link_speed(
+        interface: str,
+    ) -> int:
         """
-        Oblicza chwilową prędkość:
+        Prędkość linku w Mb/s.
+        """
 
-        download = bytes/s
-        upload   = bytes/s
+        if not interface:
+            return 0
+
+        stats = psutil.net_if_stats().get(
+            interface
+        )
+
+        if stats is None:
+            return 0
+
+        return int(
+            stats.speed or 0
+        )
+
+    # ======================================================
+    # PING
+    # ======================================================
+
+    @staticmethod
+    def _ping() -> tuple[
+        float,
+        bool,
+    ]:
         """
+        Wykonuje test ping.
+
+        Zwraca:
+
+            (czas_ms, dostępność)
+        """
+
+        target = config.PING_TARGET
+
+        start = time.monotonic()
+
+        try:
+
+            result = subprocess.run(
+                [
+                    "ping",
+                    "-c",
+                    "1",
+                    "-W",
+                    "1",
+                    target,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+
+            elapsed = (
+                time.monotonic() - start
+            ) * 1000
+
+            if result.returncode == 0:
+
+                return (
+                    elapsed,
+                    True,
+                )
+
+        except (
+            OSError,
+            subprocess.SubprocessError,
+        ):
+            pass
+
+        return (
+            0.0,
+            False,
+        )
+
+    # ======================================================
+    # COLLECT
+    # ======================================================
+
+    def collect(self) -> NetworkInfo:
+        """
+        Pobiera komplet informacji o sieci.
+        """
+
+        info = NetworkInfo()
+
+        # --------------------------------------------------
+        # INTERFACE
+        # --------------------------------------------------
+
+        interface = (
+            self._get_interface()
+        )
+
+        info.interface = interface
+
+        info.ip_address = (
+            self._get_ip_address(
+                interface
+            )
+        )
+
+        info.gateway = (
+            self._get_gateway()
+        )
+
+        info.dns_server = (
+            self._get_dns_server()
+        )
+
+        info.link_speed = (
+            self._get_link_speed(
+                interface
+            )
+        )
+
+        # --------------------------------------------------
+        # STATUS
+        # --------------------------------------------------
+
+        if interface:
+
+            stats = (
+                psutil.net_if_stats()
+                .get(interface)
+            )
+
+            if stats is not None:
+                info.is_up = stats.isup
+
+        # --------------------------------------------------
+        # TRANSFER
+        # --------------------------------------------------
 
         current = (
             psutil.net_io_counters()
@@ -344,240 +349,49 @@ class NetworkCollector:
 
         elapsed = (
             current_time
-            - self.previous_time
+            - self._previous_time
         )
 
         if elapsed <= 0:
             elapsed = 1.0
 
-        download = (
+        info.download_speed = (
+            max(
+                0,
+                current.bytes_recv
+                - self._previous_counters.bytes_recv,
+            )
+            / elapsed
+        )
+
+        info.upload_speed = (
+            max(
+                0,
+                current.bytes_sent
+                - self._previous_counters.bytes_sent,
+            )
+            / elapsed
+        )
+
+        info.total_download = (
             current.bytes_recv
-            - self.previous_counters.bytes_recv
-        ) / elapsed
+        )
 
-        upload = (
+        info.total_upload = (
             current.bytes_sent
-            - self.previous_counters.bytes_sent
-        ) / elapsed
-
-        self.previous_counters = current
-
-        self.previous_time = (
-            current_time
         )
 
-        # Teoretycznie różnica nie powinna być
-        # ujemna, ale po zmianie interfejsu lub
-        # restartach może się to zdarzyć.
-        download = max(
-            download,
-            0.0,
-        )
-
-        upload = max(
-            upload,
-            0.0,
-        )
-
-        return (
-            download,
-            upload,
-        )
-
-    # ======================================================
-    # PING
-    # ======================================================
-
-    @staticmethod
-    def ping(
-        target: str,
-    ) -> tuple[float, bool]:
-        """
-        Wykonuje pojedynczy ping.
-
-        Zwraca:
-
-            (czas_ms, sukces)
-
-        """
-
-        if not target:
-            return 0.0, False
-
-        command = [
-            "ping",
-            "-c",
-            "1",
-            "-W",
-            "1",
-            target,
-        ]
-
-        start = time.monotonic()
-
-        try:
-
-            result = subprocess.run(
-                command,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                text=True,
-                timeout=2,
-            )
-
-        except (
-            OSError,
-            subprocess.SubprocessError,
-        ):
-
-            return 0.0, False
-
-        elapsed = (
-            time.monotonic()
-            - start
-        )
-
-        if result.returncode != 0:
-            return 0.0, False
-
-        # Preferujemy wartość podaną przez ping,
-        # ponieważ pomiar obejmuje dokładnie RTT.
-        match = re.search(
-            r"time[=<]([0-9.]+)\s*ms",
-            result.stdout,
-        )
-
-        if match:
-
-            try:
-
-                return (
-                    float(match.group(1)),
-                    True,
-                )
-
-            except ValueError:
-
-                pass
-
-        return (
-            elapsed * 1000,
-            True,
-        )
-
-    # ======================================================
-    # TOTAL COUNTERS
-    # ======================================================
-
-    @staticmethod
-    def get_total_counters() -> tuple[int, int]:
-        """
-        Zwraca całkowitą ilość odebranych
-        i wysłanych bajtów.
-        """
-
-        counters = (
-            psutil.net_io_counters()
-        )
-
-        return (
-            counters.bytes_recv,
-            counters.bytes_sent,
-        )
-
-    # ======================================================
-    # COLLECT
-    # ======================================================
-
-    def collect(self) -> NetworkInfo:
-        """
-        Pobiera komplet informacji sieciowych.
-        """
-
-        info = NetworkInfo()
+        self._previous_counters = current
+        self._previous_time = current_time
 
         # --------------------------------------------------
-        # Interfejs
-        # --------------------------------------------------
-
-        info.interface = (
-            self.get_primary_interface()
-        )
-
-        # --------------------------------------------------
-        # IP
-        # --------------------------------------------------
-
-        info.ip_address = (
-            self.get_ip_address(
-                info.interface
-            )
-        )
-
-        # --------------------------------------------------
-        # Gateway
-        # --------------------------------------------------
-
-        info.gateway = (
-            self.get_gateway()
-        )
-
-        # --------------------------------------------------
-        # DNS
-        # --------------------------------------------------
-
-        info.dns_server = (
-            self.get_dns_server()
-        )
-
-        # --------------------------------------------------
-        # Interface state
-        # --------------------------------------------------
-
-        info.is_up = (
-            self.is_interface_up(
-                info.interface
-            )
-        )
-
-        # --------------------------------------------------
-        # Link speed
-        # --------------------------------------------------
-
-        info.link_speed = (
-            self.get_link_speed(
-                info.interface
-            )
-        )
-
-        # --------------------------------------------------
-        # RX/TX speed
-        # --------------------------------------------------
-
-        (
-            info.download_speed,
-            info.upload_speed,
-        ) = self.get_speed()
-
-        # --------------------------------------------------
-        # Total RX/TX
-        # --------------------------------------------------
-
-        (
-            info.total_download,
-            info.total_upload,
-        ) = self.get_total_counters()
-
-        # --------------------------------------------------
-        # Internet connectivity
+        # PING
         # --------------------------------------------------
 
         (
             info.ping_ms,
             info.internet_available,
-        ) = self.ping(
-            config.PING_TARGET
-        )
+        ) = self._ping()
 
         return info
 
@@ -585,6 +399,5 @@ class NetworkCollector:
 # ==========================================================
 # GLOBALNY COLLECTOR
 # ==========================================================
-
 
 network_collector = NetworkCollector()
