@@ -182,7 +182,7 @@ sudo systemctl start touch-wakeup.service
 sudo systemctl status touch-wakeup.service
 ```
 
-## autologowanie na tty3
+## przełączenie na tty3
 
 ```
 sudo nano /etc/systemd/system/switch-to-tty3.service
