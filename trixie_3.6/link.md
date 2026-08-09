@@ -224,3 +224,4 @@ sudo systemctl start switch-to-tty3.service
 sudo systemctl status switch-to-tty3.service
 sudo systemctl enable switch-to-tty3.service
 ```
+ps -e -o tty,pid,cmd | awk '$1 != "?" {print}'
