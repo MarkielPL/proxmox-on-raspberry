@@ -178,3 +178,28 @@ sudo systemctl enable touch-wakeup.service
 sudo systemctl start touch-wakeup.service
 sudo systemctl status touch-wakeup.service
 ```
+
+## autologowanie na tty3
+
+```
+sudo nano /etc/systemd/system/switch-to-tty3.service
+```
+
+content:
+>[Unit]
+>Description=Force switch to TTY3 on boot
+>After=getty.target systemd-user-sessions.service
+># Jeśli używasz menedżera logowania (GDM, LightDM, SDDM), dodaj też:
+># After=display-manager.service
+>
+>[Service]
+>Type=oneshot
+>ExecStart=/usr/bin/chvt 3
+>RemainAfterExit=yes
+>
+>[Install]
+>WantedBy=multi-user.target
+>WantedBy=graphical.target
+
+
+sudo systemctl enable switch-to-tty3.service
