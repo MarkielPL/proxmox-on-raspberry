@@ -218,5 +218,6 @@ content:
 >
 >WantedBy=graphical.target
 
-
+```
 sudo systemctl enable switch-to-tty3.service
+```
