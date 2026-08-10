@@ -224,4 +224,7 @@ sudo systemctl start switch-to-tty3.service
 sudo systemctl status switch-to-tty3.service
 sudo systemctl enable switch-to-tty3.service
 ```
+sprawdzanie wysyłanych obrazów na ekrany:
+```
 ps -e -o tty,pid,cmd | awk '$1 != "?" {print}'
+```
