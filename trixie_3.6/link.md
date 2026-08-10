@@ -8,7 +8,7 @@
 
 dodać do skryptu:
 
-[ ] export LANG=pl_PL.UTF-8
+- [ ] export LANG=pl_PL.UTF-8
 
 
 required dependencies:
