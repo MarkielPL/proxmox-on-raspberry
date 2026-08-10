@@ -6,6 +6,9 @@
 
 [Display Control Library](https://github.com/tomba/kmsxx/)
 
+dodaćdo skryptu:
+[ ] export LANG=pl_PL.UTF-8
+
 
 required dependencies:
 
