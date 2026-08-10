@@ -30,6 +30,25 @@ LOG_DIR = PROJECT_DIR / "logs"
 
 LOG_FILE = LOG_DIR / "dashboard.log"
 
+# ==========================================================
+# ASSETS
+# ==========================================================
+
+ASSETS_DIR = PROJECT_DIR / "assets"
+
+FONTS_DIR = ASSETS_DIR / "fonts"
+IMAGES_DIR = ASSETS_DIR / "images"
+ICONS_DIR = ASSETS_DIR / "icons"
+
+DASHBOARD_FONT = (
+    FONTS_DIR
+    / "JetBrainsMonoNLNerdFontMono-LightItalic.ttf"
+)
+
+SYMBOLS_FONT = (
+    FONTS_DIR
+    / "SymbolsNerdFont-Regular.ttf"
+)
 
 # ==========================================================
 # PROXMOX
