@@ -6,15 +6,15 @@ Odczyt informacji o procesorze Raspberry Pi.
 Collector odpowiada wyłącznie za pobieranie danych CPU.
 
 Nie zawiera:
-    - kodu Rich,
-    - paneli,
-    - formatowania UI,
-    - logiki dashboardu.
+- kodu Rich,
+- paneli,
+- formatowania UI,
+- logiki dashboardu.
 
 Źródła danych:
-    - psutil
-    - /proc/cpuinfo
-    - /sys/devices/system/cpu/
+- psutil
+- /proc/cpuinfo
+- /sys/devices/system/cpu/
 """
 
 from __future__ import annotations
@@ -88,8 +88,36 @@ class CpuCollector:
         # Liczba rdzeni
         # --------------------------------------------------
 
-        info.core_count = (
-            len(info.per_core)
+        info.core_count = len(
+            info.per_core
+        )
+
+        info.physical_cores = (
+            self.physical_cores()
+        )
+
+        # --------------------------------------------------
+        # Architektura
+        # --------------------------------------------------
+
+        info.architecture = (
+            self.architecture()
+        )
+
+        # --------------------------------------------------
+        # Nazwa procesora
+        # --------------------------------------------------
+
+        info.processor_name = (
+            self.processor_name()
+        )
+
+        # --------------------------------------------------
+        # Governor
+        # --------------------------------------------------
+
+        info.governor = (
+            self.cpu_governor()
         )
 
         # --------------------------------------------------
@@ -129,6 +157,52 @@ class CpuCollector:
         except OSError:
 
             pass
+
+        # --------------------------------------------------
+        # CPU statistics
+        # --------------------------------------------------
+
+        stats = psutil.cpu_stats()
+
+        info.context_switches = (
+            stats.ctx_switches
+        )
+
+        info.interrupts = (
+            stats.interrupts
+        )
+
+        info.soft_interrupts = (
+            stats.soft_interrupts
+        )
+
+        info.syscalls = (
+            stats.syscalls
+        )
+
+        # --------------------------------------------------
+        # CPU times
+        # --------------------------------------------------
+
+        times = psutil.cpu_times()
+
+        info.user_time = getattr(
+            times,
+            "user",
+            0.0,
+        )
+
+        info.system_time = getattr(
+            times,
+            "system",
+            0.0,
+        )
+
+        info.idle_time = getattr(
+            times,
+            "idle",
+            0.0,
+        )
 
         return info
 
@@ -233,7 +307,9 @@ class CpuCollector:
     # ======================================================
 
     @classmethod
-    def cpu_governor(cls) -> str:
+    def cpu_governor(
+        cls,
+    ) -> str:
         """
         Zwraca aktualny governor CPU.
 

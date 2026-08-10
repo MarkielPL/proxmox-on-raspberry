@@ -1,25 +1,28 @@
 """
 collectors/storage.py
 
-Monitoring systemów plików i aktywności dyskowej.
+Monitoring systemów plików i transferu dyskowego.
 
-Collector:
-    - wykrywa zamontowane systemy plików,
-    - pokazuje wykorzystanie przestrzeni,
-    - pomija systemy określone w config.py,
-    - mierzy aktywność I/O.
+Collector zbiera:
+    - punkty montowania,
+    - urządzenia,
+    - filesystem,
+    - pojemność,
+    - zajętość,
+    - wolne miejsce,
+    - chwilowy odczyt/zapis.
 
-Nie zawiera kodu UI.
+Nie zawiera UI.
 """
 
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
 import psutil
 
 import config
-
 from models import DiskInfo
 
 
@@ -30,23 +33,141 @@ class StorageCollector:
 
     def __init__(self) -> None:
 
-        self._previous_io = (
-            psutil.disk_io_counters()
-        )
+        self._previous_time = time.monotonic()
 
-        self._previous_time = (
-            time.monotonic()
-        )
+        self._previous_read = 0
+        self._previous_write = 0
+
+        counters = psutil.disk_io_counters()
+
+        if counters is not None:
+
+            self._previous_read = (
+                counters.read_bytes
+            )
+
+            self._previous_write = (
+                counters.write_bytes
+            )
 
     # ======================================================
-    # DISK USAGE
+    # DISK IO
     # ======================================================
 
-    def _collect_partitions(
+    def _disk_speeds(
         self,
-    ) -> list[DiskInfo]:
+    ) -> tuple[float, float]:
 
-        result = []
+        counters = psutil.disk_io_counters()
+
+        now = time.monotonic()
+
+        elapsed = (
+            now - self._previous_time
+        )
+
+        if elapsed <= 0:
+            elapsed = 1.0
+
+        if counters is None:
+
+            self._previous_time = now
+
+            return 0.0, 0.0
+
+        read_delta = max(
+            0,
+            counters.read_bytes
+            - self._previous_read,
+        )
+
+        write_delta = max(
+            0,
+            counters.write_bytes
+            - self._previous_write,
+        )
+
+        self._previous_read = (
+            counters.read_bytes
+        )
+
+        self._previous_write = (
+            counters.write_bytes
+        )
+
+        self._previous_time = now
+
+        return (
+            read_delta / elapsed,
+            write_delta / elapsed,
+        )
+
+    # ======================================================
+    # FILESYSTEM FILTER
+    # ======================================================
+
+    @staticmethod
+    def _ignored_filesystem(
+        filesystem: str,
+    ) -> bool:
+
+        if filesystem in (
+            config.IGNORED_FILESYSTEMS
+        ):
+            return True
+
+        return False
+
+    # ======================================================
+    # MOUNT FILTER
+    # ======================================================
+
+    @staticmethod
+    def _ignored_mountpoint(
+        mountpoint: str,
+    ) -> bool:
+        """
+        Odfiltrowuje oczywiste wirtualne
+        systemy montowania.
+        """
+
+        if mountpoint.startswith(
+            "/proc"
+        ):
+            return True
+
+        if mountpoint.startswith(
+            "/sys"
+        ):
+            return True
+
+        if mountpoint.startswith(
+            "/dev"
+        ):
+            return True
+
+        if mountpoint.startswith(
+            "/run"
+        ):
+            return True
+
+        return False
+
+    # ======================================================
+    # COLLECT
+    # ======================================================
+
+    def collect(self) -> list[DiskInfo]:
+        """
+        Pobiera informacje o wszystkich
+        interesujących systemach plików.
+        """
+
+        read_speed, write_speed = (
+            self._disk_speeds()
+        )
+
+        result: list[DiskInfo] = []
 
         for partition in psutil.disk_partitions(
             all=False
@@ -56,9 +177,17 @@ class StorageCollector:
                 partition.fstype
             )
 
-            if (
+            mountpoint = (
+                partition.mountpoint
+            )
+
+            if self._ignored_filesystem(
                 filesystem
-                in config.IGNORED_FILESYSTEMS
+            ):
+                continue
+
+            if self._ignored_mountpoint(
+                mountpoint
             ):
                 continue
 
@@ -67,10 +196,6 @@ class StorageCollector:
                 and filesystem == "tmpfs"
             ):
                 continue
-
-            mountpoint = (
-                partition.mountpoint
-            )
 
             if (
                 not config.SHOW_BOOT_PARTITION
@@ -83,15 +208,13 @@ class StorageCollector:
 
             try:
 
-                usage = (
-                    psutil.disk_usage(
-                        mountpoint
-                    )
+                usage = psutil.disk_usage(
+                    mountpoint
                 )
 
             except (
-                PermissionError,
                 OSError,
+                PermissionError,
             ):
 
                 continue
@@ -105,107 +228,12 @@ class StorageCollector:
                     used=usage.used,
                     free=usage.free,
                     percent=usage.percent,
+                    read_speed=read_speed,
+                    write_speed=write_speed,
                 )
             )
 
         return result
 
-    # ======================================================
-    # DISK IO
-    # ======================================================
-
-    def _collect_io(
-        self,
-    ) -> tuple[
-        float,
-        float,
-    ]:
-
-        current = (
-            psutil.disk_io_counters()
-        )
-
-        now = time.monotonic()
-
-        elapsed = (
-            now
-            - self._previous_time
-        )
-
-        if elapsed <= 0:
-            elapsed = 1.0
-
-        if (
-            current is None
-            or self._previous_io is None
-        ):
-
-            self._previous_io = current
-            self._previous_time = now
-
-            return (
-                0.0,
-                0.0,
-            )
-
-        read_speed = max(
-            0,
-            current.read_bytes
-            - self._previous_io.read_bytes,
-        ) / elapsed
-
-        write_speed = max(
-            0,
-            current.write_bytes
-            - self._previous_io.write_bytes,
-        ) / elapsed
-
-        self._previous_io = current
-        self._previous_time = now
-
-        return (
-            read_speed,
-            write_speed,
-        )
-
-    # ======================================================
-    # COLLECT
-    # ======================================================
-
-    def collect(self) -> list[DiskInfo]:
-        """
-        Pobiera informacje o systemach plików.
-        """
-
-        disks = (
-            self._collect_partitions()
-        )
-
-        read_speed, write_speed = (
-            self._collect_io()
-        )
-
-        # Na tym etapie pokazujemy
-        # globalną aktywność I/O.
-        #
-        # W przyszłości możemy rozbudować
-        # collector do osobnych urządzeń.
-
-        if disks:
-
-            disks[0].read_speed = (
-                read_speed
-            )
-
-            disks[0].write_speed = (
-                write_speed
-            )
-
-        return disks
-
-
-# ==========================================================
-# GLOBALNY COLLECTOR
-# ==========================================================
 
 storage_collector = StorageCollector()

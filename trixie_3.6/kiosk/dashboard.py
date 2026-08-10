@@ -7,7 +7,7 @@ Odpowiada wyłącznie za:
 
 - uruchomienie aplikacji,
 - cykl odświeżania,
-- pobieranie danych z cache,
+- pobieranie danych z CollectorManager,
 - renderowanie interfejsu,
 - bezpieczne zakończenie programu.
 
@@ -15,7 +15,11 @@ Logika zbierania danych znajduje się w:
 
     collectors/
 
-Buforowanie:
+Zarządzanie danymi:
+
+    services/collector_manager.py
+
+Buforowanie i kontrola interwałów:
 
     services/cache.py
 
@@ -38,7 +42,7 @@ from rich.live import Live
 
 import config
 
-from services.cache import dashboard_cache
+from services.collector_manager import collector_manager
 
 
 # ==========================================================
@@ -51,7 +55,6 @@ console = Console()
 # ==========================================================
 # INFORMACJA STARTOWA
 # ==========================================================
-
 
 def print_startup() -> None:
     """
@@ -85,15 +88,14 @@ def print_startup() -> None:
 # PANEL GŁÓWNY
 # ==========================================================
 
-
 def create_dashboard(state):
     """
     Tworzy kompletny interfejs dashboardu.
 
-    Docelowo cała logika layoutu będzie znajdowała się
+    Cała logika layoutu znajduje się
     w panels.py.
 
-    dashboard.py nie powinien znać szczegółów
+    dashboard.py nie zna szczegółów
     poszczególnych paneli.
     """
 
@@ -108,7 +110,6 @@ def create_dashboard(state):
 # GŁÓWNA PĘTLA
 # ==========================================================
 
-
 def run() -> None:
     """
     Uruchamia główną pętlę dashboardu.
@@ -120,7 +121,7 @@ def run() -> None:
     # Pierwsze pobranie danych
     # ------------------------------------------------------
 
-    state = dashboard_cache.update()
+    state = collector_manager.force_update()
 
     # ------------------------------------------------------
     # Live
@@ -138,17 +139,13 @@ def run() -> None:
 
             while True:
 
-                cycle_started = (
-                    time.monotonic()
-                )
+                cycle_started = time.monotonic()
 
                 # ------------------------------------------
-                # Aktualizacja cache
+                # Aktualizacja danych
                 # ------------------------------------------
 
-                state = (
-                    dashboard_cache.update()
-                )
+                state = collector_manager.update()
 
                 # ------------------------------------------
                 # Renderowanie
@@ -189,7 +186,6 @@ def run() -> None:
 # MAIN
 # ==========================================================
 
-
 def main() -> int:
     """
     Punkt wejścia programu.
@@ -206,10 +202,10 @@ def main() -> int:
     except Exception as error:
 
         console.print(
-            f"\n"
-            f"[bold red]"
-            f"Dashboard error:"
-            f"[/] "
+            "\n"
+            "[bold red]"
+            "Dashboard error:"
+            "[/] "
             f"{error}"
         )
 
@@ -221,7 +217,6 @@ def main() -> int:
 # ==========================================================
 # ENTRY POINT
 # ==========================================================
-
 
 if __name__ == "__main__":
 

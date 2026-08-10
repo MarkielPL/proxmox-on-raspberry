@@ -1,41 +1,25 @@
 """
 collectors/nvme.py
 
-Monitoring dysku NVMe Raspberry Pi 5.
+Monitoring dysku NVMe Raspberry Pi.
 
 Źródła:
+    /sys/class/nvme
+    /sys/class/hwmon
 
-    /sys/class/nvme/
-    /sys/class/nvme/nvmeX/
-    /sys/class/hwmon/
-
-Collector próbuje odczytać:
-    - model,
-    - numer seryjny,
-    - firmware,
-    - temperaturę,
-    - procent zużycia,
-    - power-on hours,
-    - power cycles,
-    - unsafe shutdowns,
-    - media errors.
-
-Brak któregoś z parametrów nie jest traktowany
-jako błąd całego collectora.
+Collector nie wykonuje żadnych operacji zapisu.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-import config
-
 from models import NvmeInfo
 
 
 class NvmeCollector:
     """
-    Kolektor NVMe.
+    Collector NVMe.
     """
 
     BASE_PATH = Path(
@@ -54,8 +38,9 @@ class NvmeCollector:
         try:
 
             return (
-                path.read_text()
-                .strip()
+                path.read_text(
+                    encoding="utf-8"
+                ).strip()
             )
 
         except OSError:
@@ -74,8 +59,9 @@ class NvmeCollector:
         try:
 
             return int(
-                path.read_text()
-                .strip()
+                path.read_text(
+                    encoding="utf-8"
+                ).strip()
             )
 
         except (
@@ -92,23 +78,17 @@ class NvmeCollector:
     def _find_device(
         self,
     ) -> Path | None:
-        """
-        Znajduje pierwsze urządzenie nvmeX.
-        """
 
         if not self.BASE_PATH.exists():
             return None
 
-        devices = sorted(
+        for device in sorted(
             self.BASE_PATH.glob(
                 "nvme*"
             )
-        )
-
-        for device in devices:
+        ):
 
             if device.is_dir():
-
                 return device
 
         return None
@@ -121,10 +101,6 @@ class NvmeCollector:
         self,
         device: Path,
     ) -> float:
-        """
-        Próbuje znaleźć temperaturę NVMe
-        poprzez powiązany hwmon.
-        """
 
         hwmon_path = (
             device / "hwmon"
@@ -133,63 +109,30 @@ class NvmeCollector:
         if not hwmon_path.exists():
             return 0.0
 
-        for sensor_dir in sorted(
-            hwmon_path.glob(
-                "hwmon*"
-            )
+        for sensor_dir in hwmon_path.glob(
+            "hwmon*"
         ):
 
-            for temp_file in sorted(
-                sensor_dir.glob(
-                    "temp*_input"
-                )
+            for temp_file in sensor_dir.glob(
+                "temp*_input"
             ):
+
+                raw = self._read_text(
+                    temp_file
+                )
 
                 try:
 
-                    raw = float(
-                        temp_file
-                        .read_text()
-                        .strip()
+                    return (
+                        float(raw)
+                        / 1000.0
                     )
 
-                    return raw / 1000.0
-
-                except (
-                    OSError,
-                    ValueError,
-                ):
+                except ValueError:
 
                     continue
 
         return 0.0
-
-    # ======================================================
-    # SMART / SYSFS ATTRIBUTES
-    # ======================================================
-
-    def _read_optional_int(
-        self,
-        device: Path,
-        names: tuple[str, ...],
-    ) -> int:
-        """
-        Próbuje znaleźć wartość pod kilkoma możliwymi nazwami.
-        """
-
-        for name in names:
-
-            path = device / name
-
-            if not path.exists():
-                continue
-
-            value = self._read_int(path)
-
-            if value:
-                return value
-
-        return 0
 
     # ======================================================
     # COLLECT
@@ -197,12 +140,10 @@ class NvmeCollector:
 
     def collect(self) -> NvmeInfo:
         """
-        Pobiera informacje o pierwszym urządzeniu NVMe.
+        Pobiera informacje o pierwszym wykrytym NVMe.
         """
 
-        device = (
-            self._find_device()
-        )
+        device = self._find_device()
 
         if device is None:
 
@@ -215,31 +156,17 @@ class NvmeCollector:
             device=device.name,
         )
 
-        # --------------------------------------------------
-        # IDENTYFIKACJA
-        # --------------------------------------------------
-
-        info.model = (
-            self._read_text(
-                device / "model"
-            )
+        info.model = self._read_text(
+            device / "model"
         )
 
-        info.serial = (
-            self._read_text(
-                device / "serial"
-            )
+        info.serial = self._read_text(
+            device / "serial"
         )
 
-        info.firmware = (
-            self._read_text(
-                device / "firmware_rev"
-            )
+        info.firmware = self._read_text(
+            device / "firmware_rev"
         )
-
-        # --------------------------------------------------
-        # TEMPERATURA
-        # --------------------------------------------------
 
         info.temperature = (
             self._get_temperature(
@@ -248,65 +175,48 @@ class NvmeCollector:
         )
 
         # --------------------------------------------------
-        # DANE EKSPLOATACYJNE
+        # SMART / health
+        #
+        # Nie każdy kernel / sterownik
+        # udostępnia wszystkie pola sysfs.
         # --------------------------------------------------
 
+        info.percent_used = float(
+            self._read_int(
+                device / "smart_log" /
+                "percentage_used"
+            )
+        )
+
         info.power_on_hours = (
-            self._read_optional_int(
-                device,
-                (
-                    "power_on_hours",
-                    "power_on_hours_raw",
-                ),
+            self._read_int(
+                device / "smart_log" /
+                "power_on_hours"
             )
         )
 
         info.power_cycles = (
-            self._read_optional_int(
-                device,
-                (
-                    "power_cycles",
-                    "power_cycles_raw",
-                ),
+            self._read_int(
+                device / "smart_log" /
+                "power_cycles"
             )
         )
 
         info.unsafe_shutdowns = (
-            self._read_optional_int(
-                device,
-                (
-                    "unsafe_shutdowns",
-                    "unsafe_shutdowns_raw",
-                ),
+            self._read_int(
+                device / "smart_log" /
+                "unsafe_shutdowns"
             )
         )
 
         info.media_errors = (
-            self._read_optional_int(
-                device,
-                (
-                    "media_errors",
-                    "media_errors_raw",
-                ),
+            self._read_int(
+                device / "smart_log" /
+                "media_errors"
             )
         )
 
-        # --------------------------------------------------
-        # TEMPERATURA Z CONFIG
-        # --------------------------------------------------
-        #
-        # Sam collector nie podejmuje decyzji
-        # o kolorze ani stanie alarmowym.
-        #
-        # Progi znajdują się w config.py
-        # i będą wykorzystane przez panels.py.
-        # --------------------------------------------------
-
         return info
 
-
-# ==========================================================
-# GLOBALNY COLLECTOR
-# ==========================================================
 
 nvme_collector = NvmeCollector()

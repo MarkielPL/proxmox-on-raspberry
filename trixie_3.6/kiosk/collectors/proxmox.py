@@ -1,32 +1,26 @@
 """
 collectors/proxmox.py
 
-Monitoring lokalnego Proxmox VE 9.
+Monitoring lokalnego Proxmox VE.
 
 Architektura:
 
-    Raspberry Pi 5
-        |
-        +-- Debian Trixie
-              |
-              +-- Proxmox VE 9
-                    |
-                    +-- LXC CT100
-                          |
-                          +-- Pi-hole
+Debian Trixie
+    └── Proxmox VE 9
+        └── LXC CT100
+            └── Pi-hole
 
-Collector korzysta z lokalnych poleceń:
-
+Collector korzysta z lokalnych narzędzi:
     pveversion
-    pct status
-    pct config
-    pct exec
+    pct
+    pvesh
 
-Nie korzysta z API HTTP Proxmoxa.
+Nie korzysta z zewnętrznego API.
 """
 
 from __future__ import annotations
 
+import shutil
 import socket
 import subprocess
 
@@ -40,21 +34,31 @@ from models import (
 
 class ProxmoxCollector:
     """
-    Kolektor lokalnego Proxmox VE.
+    Collector lokalnego Proxmox VE.
     """
 
     # ======================================================
-    # RUN COMMAND
+    # COMMAND
+    # ======================================================
+
+    @staticmethod
+    def _available(
+        command: str,
+    ) -> bool:
+
+        return shutil.which(
+            command
+        ) is not None
+
+    # ======================================================
+    # RUN
     # ======================================================
 
     @staticmethod
     def _run(
         command: list[str],
-        timeout: float = 2.0,
+        timeout: float = 3.0,
     ) -> str:
-        """
-        Wykonuje lokalne polecenie.
-        """
 
         try:
 
@@ -82,9 +86,11 @@ class ProxmoxCollector:
     # ======================================================
 
     def _get_version(self) -> str:
-        """
-        Pobiera wersję Proxmoxa.
-        """
+
+        if not self._available(
+            "pveversion"
+        ):
+            return ""
 
         output = self._run(
             [
@@ -93,12 +99,7 @@ class ProxmoxCollector:
             ]
         )
 
-        if not output:
-            return ""
-
         for line in output.splitlines():
-
-            line = line.strip()
 
             if line.startswith(
                 "pve-manager:"
@@ -112,92 +113,7 @@ class ProxmoxCollector:
         return ""
 
     # ======================================================
-    # NODE STATUS
-    # ======================================================
-
-    def _get_node_status(self) -> str:
-        """
-        Sprawdza stan usługi pvedaemon.
-        """
-
-        output = self._run(
-            [
-                "systemctl",
-                "is-active",
-                "pvedaemon",
-            ]
-        )
-
-        if output:
-            return output
-
-        return "unknown"
-
-    # ======================================================
     # CONTAINER STATUS
-    # ======================================================
-
-    def _get_container_status(
-        self,
-        vmid: int,
-    ) -> str:
-
-        output = self._run(
-            [
-                "pct",
-                "status",
-                str(vmid),
-            ]
-        )
-
-        if not output:
-            return "unknown"
-
-        text = output.lower()
-
-        if "running" in text:
-            return "running"
-
-        if "stopped" in text:
-            return "stopped"
-
-        return "unknown"
-
-    # ======================================================
-    # CONTAINER CONFIG
-    # ======================================================
-
-    def _get_container_name(
-        self,
-        vmid: int,
-    ) -> str:
-
-        output = self._run(
-            [
-                "pct",
-                "config",
-                str(vmid),
-            ]
-        )
-
-        if not output:
-            return f"CT{vmid}"
-
-        for line in output.splitlines():
-
-            if line.startswith(
-                "hostname:"
-            ):
-
-                return line.split(
-                    ":",
-                    1,
-                )[1].strip()
-
-        return f"CT{vmid}"
-
-    # ======================================================
-    # CONTAINER
     # ======================================================
 
     def _get_container(
@@ -205,23 +121,165 @@ class ProxmoxCollector:
         vmid: int,
     ) -> ProxmoxContainerInfo:
 
-        status = (
-            self._get_container_status(
-                vmid
-            )
-        )
-
-        name = (
-            self._get_container_name(
-                vmid
-            )
-        )
-
-        return ProxmoxContainerInfo(
+        info = ProxmoxContainerInfo(
             vmid=vmid,
-            name=name,
-            status=status,
+            name=f"CT{vmid}",
         )
+
+        if not self._available("pct"):
+            return info
+
+        status_output = self._run(
+            [
+                "pct",
+                "status",
+                str(vmid),
+            ]
+        )
+
+        status_lower = (
+            status_output.lower()
+        )
+
+        if "running" in status_lower:
+
+            info.status = "running"
+
+        elif "stopped" in status_lower:
+
+            info.status = "stopped"
+
+        # --------------------------------------------------
+        # Container config
+        # --------------------------------------------------
+
+        config_output = self._run(
+            [
+                "pct",
+                "config",
+                str(vmid),
+            ]
+        )
+
+        for line in config_output.splitlines():
+
+            if line.startswith(
+                "hostname:"
+            ):
+
+                info.name = (
+                    line.split(
+                        ":",
+                        1,
+                    )[1].strip()
+                )
+
+                break
+
+        # --------------------------------------------------
+        # Runtime status
+        # --------------------------------------------------
+
+        if info.status == "running":
+
+            runtime = self._run(
+                [
+                    "pvesh",
+                    "get",
+                    f"/nodes/"
+                    f"{config.PROXMOX_NODE or socket.gethostname()}/"
+                    f"lxc/{vmid}/status/current",
+                    "--output-format",
+                    "json",
+                ]
+            )
+
+            if runtime:
+
+                try:
+                    import json
+
+                    data = json.loads(
+                        runtime
+                    )
+
+                    info.cpu = float(
+                        data.get(
+                            "cpu",
+                            0.0,
+                        )
+                    )
+
+                    info.memory = int(
+                        data.get(
+                            "mem",
+                            0,
+                        )
+                    )
+
+                    info.max_memory = int(
+                        data.get(
+                            "maxmem",
+                            0,
+                        )
+                    )
+
+                    info.swap = int(
+                        data.get(
+                            "swap",
+                            0,
+                        )
+                    )
+
+                    info.max_swap = int(
+                        data.get(
+                            "maxswap",
+                            0,
+                        )
+                    )
+
+                    info.uptime = int(
+                        data.get(
+                            "uptime",
+                            0,
+                        )
+                    )
+
+                    info.disk = int(
+                        data.get(
+                            "disk",
+                            0,
+                        )
+                    )
+
+                    info.max_disk = int(
+                        data.get(
+                            "maxdisk",
+                            0,
+                        )
+                    )
+
+                    info.network_in = int(
+                        data.get(
+                            "netin",
+                            0,
+                        )
+                    )
+
+                    info.network_out = int(
+                        data.get(
+                            "netout",
+                            0,
+                        )
+                    )
+
+                except (
+                    ValueError,
+                    TypeError,
+                ):
+                    pass
+
+        return info
 
     # ======================================================
     # COLLECT
@@ -229,7 +287,7 @@ class ProxmoxCollector:
 
     def collect(self) -> ProxmoxInfo:
         """
-        Pobiera stan Proxmoxa i CT Pi-hole.
+        Pobiera stan Proxmox oraz CT Pi-hole.
         """
 
         node = (
@@ -237,41 +295,27 @@ class ProxmoxCollector:
             or socket.gethostname()
         )
 
-        version = (
-            self._get_version()
-        )
+        version = self._get_version()
 
-        # Brak pveversion oznacza,
-        # że Proxmox nie jest dostępny.
         if not version:
 
             return ProxmoxInfo(
                 available=False,
-                status="unknown",
                 node=node,
+                status="unavailable",
             )
 
-        status = (
-            self._get_node_status()
-        )
-
-        pihole = (
-            self._get_container(
-                config.PIHOLE_CTID
-            )
+        pihole = self._get_container(
+            config.PIHOLE_CTID
         )
 
         return ProxmoxInfo(
             available=True,
-            status=status,
+            status="running",
             node=node,
             version=version,
             pihole=pihole,
         )
 
-
-# ==========================================================
-# GLOBALNY COLLECTOR
-# ==========================================================
 
 proxmox_collector = ProxmoxCollector()

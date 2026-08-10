@@ -3,17 +3,22 @@ collectors/fan.py
 
 Monitoring wentylatora PWM Raspberry Pi.
 
-Przykładowe źródło:
+Aktualnie wykrywany układ:
 
-    /sys/class/hwmon/hwmon3/
+/sys/class/hwmon/hwmon*/name
+    -> pwmfan
 
-    name
-    fan1_input
-    pwm1
-    pwm1_enable
+fan1_input
+    -> RPM
 
-Collector nie steruje wentylatorem.
-Tylko odczytuje jego aktualny stan.
+pwm1
+    -> wartość PWM
+
+pwm1_enable
+    -> tryb PWM
+
+Collector NIE steruje wentylatorem.
+Tylko odczytuje jego stan.
 """
 
 from __future__ import annotations
@@ -30,112 +35,46 @@ class FanCollector:
     Kolektor wentylatora PWM.
     """
 
+    BASE_PATH = Path(
+        "/sys/class/hwmon"
+    )
+
     # ======================================================
-    # FIND FAN
+    # FIND PWMFAN
     # ======================================================
 
-    def _find_fan(
-        self,
-    ) -> tuple[
-        Path | None,
-        Path | None,
-        Path | None,
-        Path | None,
-    ]:
+    def _find_hwmon(self) -> Path | None:
         """
-        Wyszukuje pierwszy dostępny wentylator PWM.
-
-        Zwraca:
-
-            hwmon_path
-            fan_input
-            pwm
-            pwm_enable
+        Znajduje hwmon obsługujący pwmfan.
         """
 
-        base = config.HWMON_PATH
-
-        if not base.exists():
-            return (
-                None,
-                None,
-                None,
-                None,
-            )
+        if not self.BASE_PATH.exists():
+            return None
 
         for hwmon in sorted(
-            base.glob("hwmon*")
+            self.BASE_PATH.glob(
+                "hwmon*"
+            )
         ):
 
-            name_file = (
-                hwmon / "name"
-            )
+            name_file = hwmon / "name"
 
             try:
 
                 name = (
-                    name_file
-                    .read_text()
-                    .strip()
+                    name_file.read_text(
+                        encoding="utf-8"
+                    ).strip()
                 )
 
             except OSError:
 
-                name = ""
-
-            # Preferujemy sterownik pwmfan.
-            if name != "pwmfan":
                 continue
 
-            fan_files = sorted(
-                hwmon.glob(
-                    "fan*_input"
-                )
-            )
+            if name == "pwmfan":
+                return hwmon
 
-            pwm_files = sorted(
-                hwmon.glob(
-                    "pwm[0-9]"
-                )
-            )
-
-            enable_files = sorted(
-                hwmon.glob(
-                    "pwm[0-9]_enable"
-                )
-            )
-
-            fan_input = (
-                fan_files[0]
-                if fan_files
-                else None
-            )
-
-            pwm = (
-                pwm_files[0]
-                if pwm_files
-                else None
-            )
-
-            pwm_enable = (
-                enable_files[0]
-                if enable_files
-                else None
-            )
-
-            return (
-                hwmon,
-                fan_input,
-                pwm,
-                pwm_enable,
-            )
-
-        return (
-            None,
-            None,
-            None,
-            None,
-        )
+        return None
 
     # ======================================================
     # READ INT
@@ -143,16 +82,15 @@ class FanCollector:
 
     @staticmethod
     def _read_int(
-        path: Path | None,
+        path: Path,
     ) -> int:
-
-        if path is None:
-            return 0
 
         try:
 
             return int(
-                path.read_text().strip()
+                path.read_text(
+                    encoding="utf-8"
+                ).strip()
             )
 
         except (
@@ -168,47 +106,65 @@ class FanCollector:
 
     def collect(self) -> FanInfo:
         """
-        Pobiera aktualny stan wentylatora.
+        Pobiera stan wentylatora.
         """
 
-        (
-            hwmon_path,
-            fan_input,
-            pwm,
-            pwm_enable,
-        ) = self._find_fan()
+        hwmon = self._find_hwmon()
 
-        if hwmon_path is None:
+        if hwmon is None:
 
             return FanInfo(
-                available=False
+                available=False,
+                status="not detected",
             )
 
-        rpm = self._read_int(
-            fan_input
+        fan_path = (
+            hwmon / "fan1_input"
         )
 
-        pwm_value = self._read_int(
-            pwm
+        pwm_path = (
+            hwmon / "pwm1"
+        )
+
+        enable_path = (
+            hwmon / "pwm1_enable"
+        )
+
+        rpm = self._read_int(
+            fan_path
+        )
+
+        pwm = self._read_int(
+            pwm_path
         )
 
         pwm_enabled = self._read_int(
-            pwm_enable
-        )
-
-        pwm_percent = (
-            pwm_value
-            / config.PWM_MAX
-            * 100
-            if config.PWM_MAX > 0
-            else 0.0
+            enable_path
         )
 
         # --------------------------------------------------
-        # STATUS
+        # PWM 8-bit / 0-255
         # --------------------------------------------------
 
-        if rpm < config.FAN_MIN_RPM:
+        pwm_percent = 0.0
+
+        if config.PWM_MAX > 0:
+
+            pwm_percent = (
+                pwm
+                / config.PWM_MAX
+                * 100.0
+            )
+
+        # --------------------------------------------------
+        # Status
+        # --------------------------------------------------
+
+        if rpm <= 0:
+
+            status = "stopped"
+
+        elif rpm < config.FAN_MIN_RPM:
 
             status = "low"
 
@@ -218,24 +174,18 @@ class FanCollector:
 
         else:
 
-            status = "normal"
+            status = "running"
 
         return FanInfo(
             available=True,
             device="pwmfan",
-            hwmon_path=str(
-                hwmon_path
-            ),
+            hwmon_path=str(hwmon),
             rpm=rpm,
-            pwm=pwm_value,
+            pwm=pwm,
             pwm_percent=pwm_percent,
             pwm_enabled=pwm_enabled,
             status=status,
         )
 
-
-# ==========================================================
-# GLOBALNY COLLECTOR
-# ==========================================================
 
 fan_collector = FanCollector()

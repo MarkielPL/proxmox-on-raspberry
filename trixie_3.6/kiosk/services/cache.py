@@ -364,6 +364,43 @@ class DataCache:
             key
         ) > max_age
 
+    # ==========================================================
+    # INVALIDATE
+    # ==========================================================
+    
+    def invalidate(
+        self,
+        key: str | None = None,
+    ) -> None:
+        """
+        Wymusza ponowną aktualizację danych.
+    
+        W przeciwieństwie do clear():
+    
+            - nie usuwa wartości,
+            - nie usuwa danych diagnostycznych,
+            - zeruje timestamp aktualizacji.
+    
+        Dzięki temu collector przy następnym wywołaniu
+        zostanie wykonany ponownie, ale ostatnia poprawna
+        wartość pozostaje dostępna.
+        """
+    
+        if key is None:
+        
+            for entry in self._data.values():
+                entry.updated = 0.0
+    
+            return
+    
+        entry = self._data.get(
+            key
+        )
+    
+        if entry is not None:
+        
+            entry.updated = 0.0
+    
     # ======================================================
     # CLEAR
     # ======================================================

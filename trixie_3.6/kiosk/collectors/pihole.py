@@ -1,38 +1,29 @@
 """
 collectors/pihole.py
 
-Monitoring Pi-hole działającego jako:
+Monitoring Pi-hole działającego jako LXC.
 
-    Debian Trixie
-        |
-        +-- Proxmox VE 9
-              |
-              +-- LXC CT100
-                    |
-                    +-- Pi-hole
+Architektura:
 
-Collector komunikuje się z kontenerem
-przez lokalne:
+Proxmox
+    └── CT100
+        └── Pi-hole
 
-    pct exec 100
+Collector:
+    1. sprawdza stan CT100,
+    2. sprawdza usługę pihole-FTL,
+    3. próbuje pobrać statystyki Pi-hole
+       przez API dostępne wewnątrz kontenera.
 
-Nie wymaga adresu IP Pi-hole.
-
-Pobierane są:
-    - stan kontenera,
-    - stan pihole-FTL,
-    - wersja Pi-hole,
-    - podstawowe statystyki DNS,
-    - liczba domen,
-    - liczba klientów,
-    - liczba zapytań.
+Nie steruje Pi-hole.
 """
 
 from __future__ import annotations
 
 import json
 import subprocess
-import time
+import urllib.error
+import urllib.request
 
 import config
 
@@ -41,7 +32,7 @@ from models import PiHoleInfo
 
 class PiHoleCollector:
     """
-    Kolektor Pi-hole.
+    Collector Pi-hole LXC.
     """
 
     # ======================================================
@@ -53,9 +44,6 @@ class PiHoleCollector:
         command: list[str],
         timeout: float = 3.0,
     ) -> str:
-        """
-        Wykonuje polecenie wewnątrz CT Pi-hole.
-        """
 
         try:
 
@@ -88,54 +76,43 @@ class PiHoleCollector:
     # CONTAINER STATUS
     # ======================================================
 
-    def _get_container_status(
-        self,
-    ) -> str:
+    def _container_running(self) -> bool:
 
-        try:
+        output = self._pct_exec(
+            [
+                "systemctl",
+                "is-system-running",
+            ]
+        )
 
-            result = subprocess.run(
-                [
-                    "pct",
-                    "status",
-                    str(config.PIHOLE_CTID),
-                ],
-                capture_output=True,
-                text=True,
-                timeout=2,
-            )
-
-            if result.returncode != 0:
-                return "unknown"
-
-            text = (
-                result.stdout
-                .strip()
-                .lower()
-            )
-
-            if "running" in text:
-                return "running"
-
-            if "stopped" in text:
-                return "stopped"
-
-        except (
-            OSError,
-            subprocess.SubprocessError,
+        if output in (
+            "running",
+            "degraded",
         ):
-            pass
+            return True
 
-        return "unknown"
+        status = subprocess.run(
+            [
+                "pct",
+                "status",
+                str(config.PIHOLE_CTID),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=2.0,
+        )
+
+        return (
+            status.returncode == 0
+            and "running"
+            in status.stdout.lower()
+        )
 
     # ======================================================
-    # FTL STATUS
+    # DNS STATUS
     # ======================================================
 
     def _get_dns_status(self) -> str:
-        """
-        Stan pihole-FTL.
-        """
 
         output = self._pct_exec(
             [
@@ -148,41 +125,22 @@ class PiHoleCollector:
         if output:
             return output
 
-        return "unknown"
-
-    # ======================================================
-    # PI-HOLE VERSION
-    # ======================================================
-
-    def _get_version(self) -> str:
-        """
-        Pobiera wersję Pi-hole.
-        """
+        # --------------------------------------------------
+        # Fallback dla instalacji,
+        # w której nazwa usługi różni się.
+        # --------------------------------------------------
 
         output = self._pct_exec(
             [
-                "pihole",
-                "-v",
+                "pihole-FTL",
+                "status",
             ]
         )
 
-        if not output:
-            return "unknown"
+        if output:
+            return "running"
 
-        # Szukamy pierwszej sensownej linii.
-        for line in output.splitlines():
-
-            line = line.strip()
-
-            if "Pi-hole" in line:
-
-                return line
-
-            if "Core version" in line:
-
-                return line
-
-        return output.splitlines()[0]
+        return "unknown"
 
     # ======================================================
     # API
@@ -190,29 +148,35 @@ class PiHoleCollector:
 
     def _get_api_data(self) -> dict:
         """
-        Próbuje pobrać dane z lokalnego API Pi-hole
-        wewnątrz kontenera.
+        Próbuje pobrać dane API Pi-hole.
 
-        W przypadku Pi-hole v6 najpierw próbujemy
-        pihole-FTL przez dostępne polecenia lokalne.
-
-        Funkcja jest odporna na brak konkretnego
-        endpointu API.
+        API jest wywoływane wewnątrz LXC.
         """
 
-        # --------------------------------------------------
-        # Próba użycia pihole-FTL --config
-        # --------------------------------------------------
-
-        output = self._pct_exec(
-            [
-                "pihole-FTL",
-                "--config",
-            ],
-            timeout=3.0,
+        urls = (
+            "http://127.0.0.1/api/stats/summary",
+            "http://127.0.0.1/api/stats/summary?sid=local",
         )
 
-        if output:
+        # --------------------------------------------------
+        # Próba wykonania curl wewnątrz kontenera.
+        # --------------------------------------------------
+
+        for url in urls:
+
+            output = self._pct_exec(
+                [
+                    "curl",
+                    "-fsS",
+                    "--max-time",
+                    "2",
+                    url,
+                ],
+                timeout=3.0,
+            )
+
+            if not output:
+                continue
 
             try:
 
@@ -228,44 +192,10 @@ class PiHoleCollector:
                     return data
 
             except ValueError:
-                pass
+
+                continue
 
         return {}
-
-    # ======================================================
-    # DATABASE / STATS
-    # ======================================================
-
-    def _get_summary_from_cli(
-        self,
-    ) -> dict:
-        """
-        Próbuje uzyskać podstawowe informacje
-        za pomocą lokalnych poleceń Pi-hole.
-
-        Nie zakłada konkretnego API HTTP.
-        """
-
-        result: dict = {}
-
-        # --------------------------------------------------
-        # Liczba domen
-        # --------------------------------------------------
-
-        gravity = self._pct_exec(
-            [
-                "pihole",
-                "-g",
-                "-l",
-            ],
-            timeout=5.0,
-        )
-
-        if gravity:
-
-            result["gravity"] = gravity
-
-        return result
 
     # ======================================================
     # COLLECT
@@ -278,128 +208,161 @@ class PiHoleCollector:
 
         info = PiHoleInfo()
 
-        # --------------------------------------------------
-        # STAN LXC
-        # --------------------------------------------------
-
-        container_status = (
-            self._get_container_status()
-        )
-
-        if container_status != "running":
+        if not self._container_running():
 
             info.available = False
-            info.status = container_status
-            info.dns_status = (
-                "offline"
-            )
+            info.status = "container stopped"
 
             return info
 
         info.available = True
         info.status = "running"
 
-        # --------------------------------------------------
-        # FTL
-        # --------------------------------------------------
-
         info.dns_status = (
             self._get_dns_status()
         )
 
-        # --------------------------------------------------
-        # VERSION
-        # --------------------------------------------------
+        data = self._get_api_data()
 
-        info.api_version = (
-            self._get_version()
-        )
+        if not data:
+            return info
 
         # --------------------------------------------------
-        # API / STATS
-        # --------------------------------------------------
-
-        start = time.monotonic()
-
-        data = (
-            self._get_api_data()
-        )
-
-        elapsed = (
-            time.monotonic()
-            - start
-        )
-
-        # Jeśli udało się uzyskać dane,
-        # zapamiętujemy podstawowe wartości.
+        # API Pi-hole może różnić się strukturą
+        # zależnie od wersji.
         #
-        # Parser pozostaje celowo ostrożny,
-        # ponieważ format danych zależy
-        # od wersji Pi-hole.
+        # Odczytujemy tylko pola, które występują.
+        # --------------------------------------------------
 
-        if data:
+        info.api_version = str(
+            data.get(
+                "version",
+                data.get(
+                    "api_version",
+                    "unknown",
+                ),
+            )
+        )
+
+        try:
+
+            info.response_time = float(
+                data.get(
+                    "response_time",
+                    0.0,
+                )
+            )
+
+        except (
+            ValueError,
+            TypeError,
+        ):
+
+            info.response_time = 0.0
+
+        try:
 
             info.queries_total = int(
                 data.get(
-                    "queries_total",
+                    "queries",
                     data.get(
-                        "queries",
+                        "queries_total",
                         0,
                     ),
                 )
-                or 0
             )
+
+        except (
+            ValueError,
+            TypeError,
+        ):
+
+            info.queries_total = 0
+
+        try:
 
             info.queries_blocked = int(
                 data.get(
-                    "queries_blocked",
+                    "blocked",
                     data.get(
-                        "blocked",
+                        "queries_blocked",
                         0,
                     ),
                 )
-                or 0
             )
+
+        except (
+            ValueError,
+            TypeError,
+        ):
+
+            info.queries_blocked = 0
+
+        try:
+
+            info.blocked_percentage = float(
+                data.get(
+                    "blocked_percentage",
+                    0.0,
+                )
+            )
+
+        except (
+            ValueError,
+            TypeError,
+        ):
+
+            info.blocked_percentage = 0.0
+
+        try:
 
             info.domains = int(
                 data.get(
                     "domains",
-                    data.get(
-                        "domains_being_blocked",
-                        0,
-                    ),
+                    0,
                 )
-                or 0
             )
+
+        except (
+            ValueError,
+            TypeError,
+        ):
+
+            info.domains = 0
+
+        try:
 
             info.clients = int(
                 data.get(
                     "clients",
                     0,
                 )
-                or 0
             )
 
-            if (
-                info.queries_total > 0
-                and info.queries_blocked >= 0
-            ):
+        except (
+            ValueError,
+            TypeError,
+        ):
 
-                info.blocked_percentage = (
-                    info.queries_blocked
-                    / info.queries_total
-                    * 100
+            info.clients = 0
+
+        try:
+
+            info.queries_per_second = float(
+                data.get(
+                    "queries_per_second",
+                    0.0,
                 )
+            )
 
-        info.response_time = (
-            elapsed * 1000
-        )
+        except (
+            ValueError,
+            TypeError,
+        ):
+
+            info.queries_per_second = 0.0
 
         return info
 
-
-# ==========================================================
-# GLOBALNY COLLECTOR
-# ==========================================================
 
 pihole_collector = PiHoleCollector()
