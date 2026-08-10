@@ -232,3 +232,11 @@ sprawdzanie wysyłanych obrazów na ekrany:
 ```
 ps -e -o tty,pid,cmd | awk '$1 != "?" {print}'
 ```
+
+zmiana ustawieńwyświetlania:
+```
+sudo nano /boot/firmware/cmdline.txt
+```
+dadać na koncu linii:
+> video=HDMI-A-1:1920x1080@60
+
