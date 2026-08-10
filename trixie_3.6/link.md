@@ -6,6 +6,10 @@
 
 [Display Control Library](https://github.com/tomba/kmsxx/)
 
+dodać do skryptu:
+
+- [ ] export LANG=pl_PL.UTF-8
+
 
 required dependencies:
 
@@ -224,4 +228,15 @@ sudo systemctl start switch-to-tty3.service
 sudo systemctl status switch-to-tty3.service
 sudo systemctl enable switch-to-tty3.service
 ```
+sprawdzanie wysyłanych obrazów na ekrany:
+```
 ps -e -o tty,pid,cmd | awk '$1 != "?" {print}'
+```
+
+zmiana ustawieńwyświetlania:
+```
+sudo nano /boot/firmware/cmdline.txt
+```
+dadać na koncu linii:
+> video=HDMI-A-1:1920x1080@60
+
