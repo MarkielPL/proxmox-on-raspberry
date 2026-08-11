@@ -3,6 +3,8 @@
 > **Modularny dashboard systemowy dla Raspberry Pi 5**, uruchamiany w trybie kiosk na terminalu tekstowym.
 >
 > Projekt został zaprojektowany jako lekki, modularny i odporny na błędy interfejs monitorujący system Raspberry Pi, Proxmox VE, Pi-hole, pamięć masową, sieć oraz układ chłodzenia.
+---
+<img width="1182" height="638" alt="{EFF87572-FE4F-4018-88D6-FE30679045D5}" src="https://github.com/user-attachments/assets/e8829688-8bd1-4a61-838f-659f1d6a04b7" />
 
 ---
 
