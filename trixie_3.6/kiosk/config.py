@@ -42,7 +42,7 @@ ICONS_DIR = ASSETS_DIR / "icons"
 
 DASHBOARD_FONT = (
     FONTS_DIR
-    / "JetBrainsMonoNLNerdFontMono-LightItalic.ttf"
+    / "JetBrainsMonoNerdFontMono-Regular.ttf"
 )
 
 SYMBOLS_FONT = (
@@ -125,6 +125,30 @@ NVME_INTERVAL = 5
 
 FAN_INTERVAL = 2
 
+# ==========================================================
+# ROZMIAR I DOPASOWANIE DASHBOARDU
+# ==========================================================
+
+# Minimalna szerokość terminala, dla której dashboard
+# jest projektowany.
+DASHBOARD_MIN_WIDTH = 120
+
+# Minimalna wysokość terminala.
+DASHBOARD_MIN_HEIGHT = 32
+
+# Margines bezpieczeństwa od krawędzi terminala.
+DASHBOARD_MARGIN = 0
+
+# Czy dashboard ma automatycznie dopasowywać layout
+# do aktualnego rozmiaru terminala.
+DASHBOARD_AUTO_RESIZE = True
+
+# Maksymalna liczba kolumn głównego layoutu.
+DASHBOARD_COLUMNS = 2
+
+# Czy układ ma przełączać się na jedną kolumnę,
+# gdy terminal jest zbyt wąski.
+DASHBOARD_RESPONSIVE = True
 
 # ==========================================================
 # PROGI CPU
@@ -206,13 +230,13 @@ FAN_PWM_ENABLE_NAME = "pwm1_enable"
 # PASKI
 # ==========================================================
 
-CPU_BAR_WIDTH = 20
+CPU_BAR_WIDTH = 16
 
-RAM_BAR_WIDTH = 30
+RAM_BAR_WIDTH = 20
 
-DISK_BAR_WIDTH = 25
+DISK_BAR_WIDTH = 18
 
-FAN_BAR_WIDTH = 20
+FAN_BAR_WIDTH = 16
 
 
 # ==========================================================
@@ -256,31 +280,46 @@ COLOR_BORDER = "grey50"
 # IKONY
 # ==========================================================
 
-ICON_CPU = "🖥"
+# ICON_CPU = "🖥"
 
-ICON_RAM = "🧠"
+# ICON_RAM = "🧠"
 
-ICON_NETWORK = "🌐"
+# ICON_NETWORK = "🌐"
 
-ICON_DISK = "💾"
+# ICON_DISK = "💾"
 
-ICON_TEMP = "🌡"
+# ICON_TEMP = "🌡"
 
-ICON_FAN = "🌀"
+# ICON_FAN = "🌀"
 
-ICON_POWER = "⚡"
+# ICON_POWER = "⚡"
 
-ICON_CLOCK = "🕒"
+# ICON_CLOCK = "🕒"
 
-ICON_PIHOLE = "🛡"
+# ICON_PIHOLE = "🛡"
 
-ICON_PROXMOX = "📦"
+# ICON_PROXMOX = "📦"
 
-ICON_WARNING = "⚠"
+# ICON_WARNING = "⚠"
 
-ICON_OK = "✔"
+# ICON_OK = "✔"
 
-ICON_ERROR = "✖"
+# ICON_ERROR = "✖"
+
+ICON_CPU = "CPU"
+ICON_RAM = "RAM"
+ICON_NETWORK = "NET"
+ICON_DISK = "DISK"
+ICON_TEMP = "TEMP"
+ICON_FAN = "FAN"
+ICON_POWER = "SYS"
+ICON_CLOCK = "TIME"
+ICON_PIHOLE = "DNS"
+ICON_PROXMOX = "PVE"
+
+ICON_WARNING = "!"
+ICON_OK = "+"
+ICON_ERROR = "X"
 
 
 # ==========================================================
@@ -395,7 +434,7 @@ DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 # ==========================================================
 
 HEADER_TITLE = (
-    "Raspberry Pi 5 • Debian Trixie • Proxmox VE 9"
+    "Raspberry Pi 5 | Debian Trixie | Proxmox VE 9"
 )
 
 FOOTER_TEXT = "Kiosk Dashboard"

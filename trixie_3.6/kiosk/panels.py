@@ -19,8 +19,8 @@ Cache danych znajduje się w services/cache.py.
 
 from __future__ import annotations
 
+import shutil
 import socket
-import time
 from datetime import datetime
 
 from rich.align import Align
@@ -240,6 +240,9 @@ def simple_panel(
 ) -> Panel:
     """
     Tworzy standardowy panel dashboardu.
+
+    Padding jest ograniczony do minimum, aby maksymalizować
+    dostępną przestrzeń roboczą terminala.
     """
 
     return Panel(
@@ -247,8 +250,60 @@ def simple_panel(
         title=title,
         border_style=color,
         padding=(0, 1),
+        expand=True,
     )
 
+
+def get_terminal_size():
+    """
+    Zwraca aktualny rozmiar terminala.
+
+    Rich pracuje w kolumnach i wierszach, a nie
+    w pikselach. Rozmiar jest pobierany bezpośrednio
+    z terminala, na którym działa dashboard.
+    """
+
+    size = shutil.get_terminal_size(
+        fallback=(
+            config.DASHBOARD_MIN_WIDTH,
+            config.DASHBOARD_MIN_HEIGHT,
+        )
+    )
+
+    width = max(
+        size.columns,
+        config.DASHBOARD_MIN_WIDTH,
+    )
+
+    height = max(
+        size.lines,
+        config.DASHBOARD_MIN_HEIGHT,
+    )
+
+    return width, height
+
+def get_layout_mode():
+    """
+    Określa sposób rozmieszczenia paneli na podstawie
+    rzeczywistego rozmiaru terminala.
+
+    Zwraca:
+        "two_columns"
+        "one_column"
+    """
+
+    width, height = get_terminal_size()
+
+    if not config.DASHBOARD_RESPONSIVE:
+        return "two_columns"
+
+    if width < 120:
+        return "one_column"
+
+    if height < 32:
+        return "one_column"
+
+    return "two_columns"
 
 # ==========================================================
 # CPU
@@ -274,18 +329,21 @@ def create_cpu_panel(
 
     table.add_column(
         "CPU",
-        width=6,
+        width=5,
+        no_wrap=True,
     )
 
     table.add_column(
         "BAR",
         ratio=1,
+        no_wrap=True,
     )
 
     table.add_column(
         "%",
         justify="right",
-        width=6,
+        width=5,
+        no_wrap=True,
     )
 
     for number, usage in enumerate(
@@ -724,12 +782,14 @@ def create_storage_panel(
     table.add_column(
         "Mount",
         ratio=1,
+        no_wrap=True,
     )
 
     table.add_column(
         "Usage",
         justify="right",
-        width=9,
+        width=14,
+        no_wrap=True,
     )
 
     for disk in disks:
@@ -1237,105 +1297,162 @@ def create_footer(
 # GŁÓWNY LAYOUT
 # ==========================================================
 
-
 def create_dashboard_layout(
     state,
 ) -> Layout:
     """
     Tworzy kompletny layout dashboardu.
 
-    Układ jest celowo kompaktowy, ponieważ docelowym
-    urządzeniem jest mały ekran około 18 cm.
+    Layout jest responsywny względem rzeczywistego
+    rozmiaru terminala.
+
+    Przy odpowiedniej szerokości używane są dwie kolumny.
+    Przy małej szerokości przechodzimy do jednej kolumny.
+
+    Program nie zakłada konkretnej rozdzielczości HDMI.
     """
+
+    width, height = get_terminal_size()
+    layout_mode = get_layout_mode()
 
     layout = Layout()
 
-    # ------------------------------------------------------
-    # Główne obszary
-    # ------------------------------------------------------
+    # ======================================================
+    # GŁÓWNY PODZIAŁ
+    # ======================================================
+
+    header_height = 4
+    footer_height = 3
+
+    body_height = max(
+        1,
+        height
+        - header_height
+        - footer_height,
+    )
 
     layout.split_column(
         Layout(
             name="header",
-            size=4,
+            size=header_height,
         ),
         Layout(
             name="body",
+            size=body_height,
         ),
         Layout(
             name="footer",
-            size=3,
+            size=footer_height,
         ),
     )
 
-    # ------------------------------------------------------
-    # Body
-    # ------------------------------------------------------
+    # ======================================================
+    # BODY
+    # ======================================================
 
-    layout["body"].split_row(
-        Layout(
-            name="left",
-            ratio=1,
-        ),
-        Layout(
-            name="right",
-            ratio=1,
-        ),
-    )
+    if layout_mode == "two_columns":
 
-    # ------------------------------------------------------
-    # Lewa kolumna
-    # ------------------------------------------------------
+        layout["body"].split_row(
+            Layout(
+                name="left",
+                ratio=1,
+            ),
+            Layout(
+                name="right",
+                ratio=1,
+            ),
+        )
 
-    layout["left"].split_column(
-        Layout(
-            name="cpu",
-            ratio=2,
-        ),
-        Layout(
-            name="network",
-            ratio=1,
-        ),
-        Layout(
-            name="storage",
-            ratio=1,
-        ),
-    )
+        # ==================================================
+        # LEWA KOLUMNA
+        # ==================================================
 
-    # ------------------------------------------------------
-    # Prawa kolumna
-    # ------------------------------------------------------
+        layout["left"].split_column(
+            Layout(
+                name="cpu",
+                ratio=2,
+            ),
+            Layout(
+                name="network",
+                ratio=1,
+            ),
+            Layout(
+                name="storage",
+                ratio=1,
+            ),
+        )
 
-    layout["right"].split_column(
-        Layout(
-            name="memory",
-            ratio=1,
-        ),
-        Layout(
-            name="temperature",
-            ratio=1,
-        ),
-        Layout(
-            name="cooling",
-            ratio=1,
-        ),
-        Layout(
-            name="services",
-            ratio=1,
-        ),
-    )
+        # ==================================================
+        # PRAWA KOLUMNA
+        # ==================================================
 
-    # ------------------------------------------------------
-    # Header
-    # ------------------------------------------------------
+        layout["right"].split_column(
+            Layout(
+                name="memory",
+                ratio=1,
+            ),
+            Layout(
+                name="temperature",
+                ratio=1,
+            ),
+            Layout(
+                name="cooling",
+                ratio=1,
+            ),
+            Layout(
+                name="services",
+                ratio=1,
+            ),
+        )
+
+    else:
+
+        # ==================================================
+        # TRYB JEDNEJ KOLUMNY
+        # ==================================================
+
+        layout["body"].split_column(
+            Layout(
+                name="cpu",
+                ratio=2,
+            ),
+            Layout(
+                name="network",
+                ratio=1,
+            ),
+            Layout(
+                name="storage",
+                ratio=1,
+            ),
+            Layout(
+                name="memory",
+                ratio=1,
+            ),
+            Layout(
+                name="temperature",
+                ratio=1,
+            ),
+            Layout(
+                name="cooling",
+                ratio=1,
+            ),
+            Layout(
+                name="services",
+                ratio=1,
+            ),
+        )
+
+    # ======================================================
+    # HEADER
+    # ======================================================
 
     layout["header"].update(
         create_header(state)
     )
 
-    # ------------------------------------------------------
+    # ======================================================
     # CPU
-    # ------------------------------------------------------
+    # ======================================================
 
     layout["cpu"].update(
         create_cpu_panel(
@@ -1343,9 +1460,9 @@ def create_dashboard_layout(
         )
     )
 
-    # ------------------------------------------------------
+    # ======================================================
     # NETWORK
-    # ------------------------------------------------------
+    # ======================================================
 
     if config.SHOW_NETWORK_PANEL:
 
@@ -1361,9 +1478,9 @@ def create_dashboard_layout(
             Text("")
         )
 
-    # ------------------------------------------------------
+    # ======================================================
     # STORAGE
-    # ------------------------------------------------------
+    # ======================================================
 
     if config.SHOW_STORAGE_PANEL:
 
@@ -1379,9 +1496,9 @@ def create_dashboard_layout(
             Text("")
         )
 
-    # ------------------------------------------------------
+    # ======================================================
     # RAM
-    # ------------------------------------------------------
+    # ======================================================
 
     layout["memory"].update(
         create_memory_panel(
@@ -1389,9 +1506,9 @@ def create_dashboard_layout(
         )
     )
 
-    # ------------------------------------------------------
+    # ======================================================
     # TEMPERATURE
-    # ------------------------------------------------------
+    # ======================================================
 
     layout["temperature"].update(
         create_temperature_panel(
@@ -1399,9 +1516,9 @@ def create_dashboard_layout(
         )
     )
 
-    # ------------------------------------------------------
+    # ======================================================
     # COOLING
-    # ------------------------------------------------------
+    # ======================================================
 
     if config.SHOW_COOLING_PANEL:
 
@@ -1417,31 +1534,43 @@ def create_dashboard_layout(
             Text("")
         )
 
-    # ------------------------------------------------------
+    # ======================================================
     # SERVICES
-    # ------------------------------------------------------
+    # ======================================================
 
-    service_content = Group(
-        create_pihole_panel(
-            state.pihole
+    services = []
+
+    if config.SHOW_PIHOLE_PANEL:
+
+        services.append(
+            create_pihole_panel(
+                state.pihole
+            )
         )
-        if config.SHOW_PIHOLE_PANEL
-        else Text(""),
 
-        create_proxmox_panel(
-            state.proxmox
+    if config.SHOW_PROXMOX_PANEL:
+
+        services.append(
+            create_proxmox_panel(
+                state.proxmox
+            )
         )
-        if config.SHOW_PROXMOX_PANEL
-        else Text(""),
-    )
 
-    layout["services"].update(
-        service_content
-    )
+    if services:
 
-    # ------------------------------------------------------
+        layout["services"].update(
+            Group(*services)
+        )
+
+    else:
+
+        layout["services"].update(
+            Text("")
+        )
+
+    # ======================================================
     # FOOTER
-    # ------------------------------------------------------
+    # ======================================================
 
     layout["footer"].update(
         create_footer(state)
