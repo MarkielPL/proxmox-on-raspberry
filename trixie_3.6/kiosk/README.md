@@ -925,11 +925,7 @@ Najprostszy sposób rozumienia aplikacji:
 
 Na obecnym etapie projekt nie deklaruje konkretnej licencji open-source.
 
-Przed publikacją repozytorium należy dodać odpowiedni plik:
----
-
-
-zgodnie z wybraną licencją projektu.
+> Przed publikacją repozytorium należy dodać odpowiedni plik: zgodnie z wybraną licencją projektu.
 
 ---
 
