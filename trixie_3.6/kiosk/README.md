@@ -639,7 +639,7 @@ Projekt można traktować jako sześć logicznych warstw:
 └──────────────┬──────────────┘
                ▼
 ┌─────────────────────────────┐
-│  5. PRESENTATION             │
+│  5. PRESENTATION            │
 │  Rich / panels / layout     │
 └──────────────┬──────────────┘
                ▼
