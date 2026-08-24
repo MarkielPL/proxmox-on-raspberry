@@ -207,18 +207,18 @@ Pierwsza aktualizacja danych
 Utwórz Rich Live
   │
   ▼
-┌───────────────────────────────┐
-│          GŁÓWNA PĘTLA         │
-│                               │
-│  1. Sprawdź interwały         │
+┌────────────────────────────────┐
+│          GŁÓWNA PĘTLA          │
+│                                │
+│  1. Sprawdź interwały          │
 │  2. Uruchom wymagane collectory│
-│  3. Zapisz wyniki do cache    │
-│  4. Zaktualizuj state         │
-│  5. Zbuduj layout             │
+│  3. Zapisz wyniki do cache     │
+│  4. Zaktualizuj state          │
+│  5. Zbuduj layout              │
 │  6. Renderuj Live              │
 │  7. Odczekaj do kolejnego cyklu│
-│                               │
-└───────────────┬───────────────┘
+│                                │
+└───────────────┬────────────────┘
                 │
                 └──────────────► powtórz
 ```
