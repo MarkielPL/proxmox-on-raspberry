@@ -14,6 +14,16 @@ Ten moduł:
 
 Cała logika pobierania danych znajduje się w collectors/.
 Cache danych znajduje się w services/cache.py.
+
+nadchodząca zmiana:
+- panels.py odpowiada za to, jakie znaki są wyświetlane, a system/TTY odpowiada za to, jak wyglądają te znaki.
+    Dzięki temu później możemy zmieniać:
+    - font,
+    - rozmiar fontu,
+    - Nerd Font,
+    - wygląd terminala,
+
+bez zmieniania layoutu dashboardu.
 """
 
 

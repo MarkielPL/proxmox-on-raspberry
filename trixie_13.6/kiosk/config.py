@@ -4,6 +4,44 @@ Konfiguracja Raspberry Pi Kiosk Dashboard.
 W tym pliku znajdują się wszystkie ustawienia,
 które użytkownik może zmieniać bez ingerencji
 w pozostały kod programu.
+
+plan rozwoju:                   dodać:
+                 KIOSK        │  
+                   │          │  
+                   ▼          │  
+             dashboard.py     │  
+                   │          │  
+                   ▼          │  
+                 Rich         │  
+                   │          │  +Unicode / Nerd Font
+                   ▼          │  
+                 tty3         │  
+                   │          │  
+                   ▼          │  
+          FONT KONSOLI LINUX  │  +JetBrains Mono
+
+oraz
+
+REBOOT / SHUTDOWN             │   kiosk
+       │                      │     ├── normalny exit
+       ▼                      │     ├── SIGTERM
+systemd wysyła SIGTERM        │     ├── SIGINT
+       │                      │     └── system shutdown/reboot
+       ▼                      │              │
+kiosk kończy pracę            │              ▼
+       │                      │           cleanup
+       ▼                      │              │
+Rich opuszcza tryb Live       │              ▼
+       │                      │             tty1
+       ▼
+tty3 zostaje zwolnione
+       │
+       ▼
+powrót do tty1
+       │
+       ▼
+shutdown / reboot
+
 """
 
 from pathlib import Path
@@ -40,9 +78,18 @@ FONTS_DIR = ASSETS_DIR / "fonts"
 IMAGES_DIR = ASSETS_DIR / "images"
 ICONS_DIR = ASSETS_DIR / "icons"
 
+# ==========================================================
+# FONTY
+# ==========================================================
+
 DASHBOARD_FONT = (
     FONTS_DIR
     / "JetBrainsMonoNerdFontMono-Regular.ttf"
+)
+
+FONT_ITALIC = (
+    FONTS_DIR
+    / "JetBrainsMonoNLNerdFontMono-LightItalic.ttf"
 )
 
 SYMBOLS_FONT = (
@@ -280,31 +327,31 @@ COLOR_BORDER = "grey50"
 # IKONY
 # ==========================================================
 
-# ICON_CPU = "🖥"
+ICON_CPU = "🖥"
 
-# ICON_RAM = "🧠"
+ICON_RAM = "🧠"
 
-# ICON_NETWORK = "🌐"
+ICON_NETWORK = "🌐"
 
-# ICON_DISK = "💾"
+ICON_DISK = "💾"
 
-# ICON_TEMP = "🌡"
+ICON_TEMP = "🌡"
 
-# ICON_FAN = "🌀"
+ICON_FAN = "🌀"
 
-# ICON_POWER = "⚡"
+ICON_POWER = "⚡"
 
-# ICON_CLOCK = "🕒"
+ICON_CLOCK = "🕒"
 
-# ICON_PIHOLE = "🛡"
+ICON_PIHOLE = "🛡"
 
-# ICON_PROXMOX = "📦"
+ICON_PROXMOX = "📦"
 
-# ICON_WARNING = "⚠"
+ICON_WARNING = "⚠"
 
-# ICON_OK = "✔"
+ICON_OK = "✔"
 
-# ICON_ERROR = "✖"
+ICON_ERROR = "✖"
 
 ICON_CPU = "CPU"
 ICON_RAM = "RAM"

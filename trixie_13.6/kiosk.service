@@ -1,0 +1,33 @@
+[Unit]
+Description=kiosk system monitor
+After=systemd-user-sessions.service getty@tty3.service
+Conflicts=getty@tty3.service
+
+[Service]
+Type=simple
+User=markiel
+WorkingDirectory=/home/markiel/kiosk
+TTYPath=/dev/tty3
+StandardInput=tty
+StandardOutput=tty
+StandardError=journal
+
+# Czyszczenie i reset TTY
+TTYReset=yes
+TTYVTDisallocate=yes
+
+# Wymagane zmienne środowiskowe dla aplikacji konsolowych/TUI
+Environment=TERM=linux
+Environment=PYTHONUNBUFFERED=1
+
+# Wczytanie czcionki konsolowej dostosowanej do Twojego ekranu
+#ExecStartPre=/usr/bin/setfont /usr/share/consolefonts/Uni2-Terminus18x10.psf.gz
+
+# Jawne wywołanie interpretera Python
+ExecStart=/usr/bin/python3 /home/markiel/kiosk/dashboard.py
+
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
