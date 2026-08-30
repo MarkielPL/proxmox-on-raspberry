@@ -17,7 +17,7 @@ APP_NAME = "Raspberry Pi Kiosk"
 
 APP_VERSION = "2.2"
 
-AUTHOR = "tom marki + ChatGPT"
+AUTHOR = "MarkielPL + ChatGPT"
 
 
 # ==========================================================

@@ -3,6 +3,8 @@
 > **Modularny dashboard systemowy dla Raspberry Pi 5**, uruchamiany w trybie kiosk na terminalu tekstowym.
 >
 > Projekt został zaprojektowany jako lekki, modularny i odporny na błędy interfejs monitorujący system Raspberry Pi, Proxmox VE, Pi-hole, pamięć masową, sieć oraz układ chłodzenia.
+---
+<img width="1182" height="638" alt="{EFF87572-FE4F-4018-88D6-FE30679045D5}" src="https://github.com/user-attachments/assets/e8829688-8bd1-4a61-838f-659f1d6a04b7" />
 
 ---
 
@@ -205,18 +207,18 @@ Pierwsza aktualizacja danych
 Utwórz Rich Live
   │
   ▼
-┌───────────────────────────────┐
-│          GŁÓWNA PĘTLA         │
-│                               │
-│  1. Sprawdź interwały         │
+┌────────────────────────────────┐
+│          GŁÓWNA PĘTLA          │
+│                                │
+│  1. Sprawdź interwały          │
 │  2. Uruchom wymagane collectory│
-│  3. Zapisz wyniki do cache    │
-│  4. Zaktualizuj state         │
-│  5. Zbuduj layout             │
+│  3. Zapisz wyniki do cache     │
+│  4. Zaktualizuj state          │
+│  5. Zbuduj layout              │
 │  6. Renderuj Live              │
 │  7. Odczekaj do kolejnego cyklu│
-│                               │
-└───────────────┬───────────────┘
+│                                │
+└───────────────┬────────────────┘
                 │
                 └──────────────► powtórz
 ```
@@ -637,7 +639,7 @@ Projekt można traktować jako sześć logicznych warstw:
 └──────────────┬──────────────┘
                ▼
 ┌─────────────────────────────┐
-│  5. PRESENTATION             │
+│  5. PRESENTATION            │
 │  Rich / panels / layout     │
 └──────────────┬──────────────┘
                ▼
@@ -923,19 +925,12 @@ Najprostszy sposób rozumienia aplikacji:
 
 Na obecnym etapie projekt nie deklaruje konkretnej licencji open-source.
 
-Przed publikacją repozytorium należy dodać odpowiedni plik:
-
-```text
-LICENSE
-```
-
-zgodnie z wybraną licencją projektu.
 
 ---
 
 # 19. 👤 Autor
 
-**tom marki + ChatGPT**
+**MarkielPL + ChatGPT**
 
 ---
 
