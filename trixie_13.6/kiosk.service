@@ -1,44 +1,54 @@
-#                    SYSTEM RUNNING
-#                          │
-#                          ▼
-#                   kiosk.service
-#                          │
-#                          ▼
-#                        tty3
-#                          │
-#                     Dashboard
-#                          │
-#         ┌────────────────┼────────────────┐
-#         │                │                │
-#      normalny         reboot           shutdown
-#      exit                │                │
-#         │                └──────┬─────────┘
-#         │                       │
-#         └───────────┬───────────┘
-#                     ▼
-#               zatrzymanie kiosk
-#                     │
-#                     ▼
-#                cleanup TTY
-#                     │
-#                     ▼
-#                 chvt 1
-#                     │
-#                     ▼
-#                   tty1
+# ==========================================================
+# KIOSK DASHBOARD
+# Raspberry Pi 5 / Debian Trixie
 #
+# SYSTEM RUNNING
+#       │
+#       ▼
+# kiosk.service
+#       │
+#       ▼
+#     tty3
+#       │
+#   Dashboard
+#       │
+#   ┌───┴───────────────┐
+#   │                   │
+# normalny          reboot / shutdown
+#   exit                 │
+#   │                    │
+#   └────────┬───────────┘
+#            ▼
+#     zatrzymanie kiosk
+#            │
+#            ▼
+#        cleanup TTY
+#            │
+#            ▼
+#          chvt 1
+#            │
+#            ▼
+#          tty1
+# ==========================================================
 [Unit]
 Description=kiosk system monitor
 
+
+# ==========================================================
+# KOLEJNOŚĆ STARTU
+# ==========================================================
+
 After=systemd-user-sessions.service getty@tty3.service
+
+# kiosk przejmuje tty3 od getty.
 Conflicts=getty@tty3.service
 
 
-[Service]
+# ==========================================================
+# SERVICE
+# ==========================================================
 
-# ==========================================================
-# TYP USŁUGI
-# ==========================================================
+[Service]
 
 Type=simple
 
@@ -47,7 +57,6 @@ Type=simple
 # UŻYTKOWNIK
 # ==========================================================
 
-# Dashboard NIE działa jako root.
 User=markiel
 
 
@@ -62,7 +71,6 @@ WorkingDirectory=/home/markiel/kiosk
 # TTY3
 # ==========================================================
 
-# Dashboard jest wyświetlany bezpośrednio na tty3.
 TTYPath=/dev/tty3
 
 StandardInput=tty
@@ -74,22 +82,14 @@ StandardError=journal
 # RESET TTY
 # ==========================================================
 
-# Przy zakończeniu usługi terminal zostanie zresetowany.
 TTYReset=yes
-
-# Zwolnienie/wyczyszczenie wirtualnego terminala.
+TTYVHangup=yes
 TTYVTDisallocate=yes
 
 
 # ==========================================================
-# UPRAWNIENIE DO ZMIANY WIRTUALNEGO TERMINALA
+# UPRAWNIENIE DO PRZEŁĄCZANIA VT
 # ==========================================================
-
-# Pozwala usłudze wykonać:
-#
-#     chvt 1
-#
-# bez uruchamiania całego programu jako root.
 
 AmbientCapabilities=CAP_SYS_TTY_CONFIG
 CapabilityBoundingSet=CAP_SYS_TTY_CONFIG
@@ -102,14 +102,30 @@ CapabilityBoundingSet=CAP_SYS_TTY_CONFIG
 Environment=TERM=linux
 Environment=PYTHONUNBUFFERED=1
 
+# ==========================================================
+# START NA TTY3
+# ==========================================================
+
+# Po uruchomieniu usługi aktywujemy tty3.
+#
+# Dzięki temu:
+#
+# systemctl start kiosk
+#
+# oraz:
+#
+# systemctl restart kiosk
+#
+# zawsze kończą się na tty3.
+
+ExecStartPre=/usr/bin/chvt 3
+
 
 # ==========================================================
 # CZCIONKA KONSOLI
 # ==========================================================
 
-# W przyszłości tutaj ustawić docelową czcionkę Linux console.
-#
-# Przykład:
+# W przyszłości:
 #
 # ExecStartPre=/usr/bin/setfont /usr/share/consolefonts/NAZWA.psf.gz
 
@@ -125,25 +141,30 @@ ExecStart=/usr/bin/python3 /home/markiel/kiosk/dashboard.py
 # ZACHOWANIE PO AWARII
 # ==========================================================
 
-# Jeżeli dashboard zakończy się nieoczekiwanie,
-# systemd uruchomi go ponownie.
-
 Restart=always
 RestartSec=2
 
 
 # ==========================================================
-# ZAKOŃCZENIE USŁUGI
+# POWRÓT DO TTY1
 # ==========================================================
 
-# Po zakończeniu dashboardu przełącz aktywny VT
-# na tty1.
+# Po zakończeniu usługi przechodzimy na tty1.
 #
-# Dotyczy również kontrolowanego zatrzymania usługi
-# podczas reboot/shutdown.
+# Dotyczy:
+#
+# - systemctl stop kiosk
+# - restart kiosk
+# - reboot
+# - shutdown
+# - normalnego zakończenia programu
 
 ExecStopPost=/usr/bin/chvt 1
 
+
+# ==========================================================
+# INSTALL
+# ==========================================================
 
 [Install]
 
