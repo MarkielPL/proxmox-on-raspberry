@@ -1,33 +1,150 @@
+#                    SYSTEM RUNNING
+#                          │
+#                          ▼
+#                   kiosk.service
+#                          │
+#                          ▼
+#                        tty3
+#                          │
+#                     Dashboard
+#                          │
+#         ┌────────────────┼────────────────┐
+#         │                │                │
+#      normalny         reboot           shutdown
+#      exit                │                │
+#         │                └──────┬─────────┘
+#         │                       │
+#         └───────────┬───────────┘
+#                     ▼
+#               zatrzymanie kiosk
+#                     │
+#                     ▼
+#                cleanup TTY
+#                     │
+#                     ▼
+#                 chvt 1
+#                     │
+#                     ▼
+#                   tty1
+#
 [Unit]
 Description=kiosk system monitor
+
 After=systemd-user-sessions.service getty@tty3.service
 Conflicts=getty@tty3.service
 
+
 [Service]
+
+# ==========================================================
+# TYP USŁUGI
+# ==========================================================
+
 Type=simple
+
+
+# ==========================================================
+# UŻYTKOWNIK
+# ==========================================================
+
+# Dashboard NIE działa jako root.
 User=markiel
+
+
+# ==========================================================
+# KATALOG PROGRAMU
+# ==========================================================
+
 WorkingDirectory=/home/markiel/kiosk
+
+
+# ==========================================================
+# TTY3
+# ==========================================================
+
+# Dashboard jest wyświetlany bezpośrednio na tty3.
 TTYPath=/dev/tty3
+
 StandardInput=tty
 StandardOutput=tty
 StandardError=journal
 
-# Czyszczenie i reset TTY
+
+# ==========================================================
+# RESET TTY
+# ==========================================================
+
+# Przy zakończeniu usługi terminal zostanie zresetowany.
 TTYReset=yes
+
+# Zwolnienie/wyczyszczenie wirtualnego terminala.
 TTYVTDisallocate=yes
 
-# Wymagane zmienne środowiskowe dla aplikacji konsolowych/TUI
+
+# ==========================================================
+# UPRAWNIENIE DO ZMIANY WIRTUALNEGO TERMINALA
+# ==========================================================
+
+# Pozwala usłudze wykonać:
+#
+#     chvt 1
+#
+# bez uruchamiania całego programu jako root.
+
+AmbientCapabilities=CAP_SYS_TTY_CONFIG
+CapabilityBoundingSet=CAP_SYS_TTY_CONFIG
+
+
+# ==========================================================
+# ŚRODOWISKO
+# ==========================================================
+
 Environment=TERM=linux
 Environment=PYTHONUNBUFFERED=1
 
-# Wczytanie czcionki konsolowej dostosowanej do Twojego ekranu
-#ExecStartPre=/usr/bin/setfont /usr/share/consolefonts/Uni2-Terminus18x10.psf.gz
 
-# Jawne wywołanie interpretera Python
+# ==========================================================
+# CZCIONKA KONSOLI
+# ==========================================================
+
+# W przyszłości tutaj ustawić docelową czcionkę Linux console.
+#
+# Przykład:
+#
+# ExecStartPre=/usr/bin/setfont /usr/share/consolefonts/NAZWA.psf.gz
+
+
+# ==========================================================
+# URUCHOMIENIE DASHBOARDU
+# ==========================================================
+
 ExecStart=/usr/bin/python3 /home/markiel/kiosk/dashboard.py
+
+
+# ==========================================================
+# ZACHOWANIE PO AWARII
+# ==========================================================
+
+# Jeżeli dashboard zakończy się nieoczekiwanie,
+# systemd uruchomi go ponownie.
 
 Restart=always
 RestartSec=2
 
+
+# ==========================================================
+# ZAKOŃCZENIE USŁUGI
+# ==========================================================
+
+# Po zakończeniu dashboardu przełącz aktywny VT
+# na tty1.
+#
+# Dotyczy również kontrolowanego zatrzymania usługi
+# podczas reboot/shutdown.
+
+ExecStopPost=/usr/bin/chvt 1
+
+
 [Install]
+
 WantedBy=multi-user.target
