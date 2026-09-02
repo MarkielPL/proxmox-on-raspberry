@@ -10,7 +10,7 @@
 
 ## 📌 Status projektu
 
-**Wersja:** `2.2`  
+**Wersja:** `0.2.2`  
 **Platforma docelowa:** Raspberry Pi 5 8 GB  
 **System:** Debian GNU/Linux 13 (Trixie)  
 **Kernel:** Linux 6.18.x / aarch64  
@@ -20,6 +20,19 @@
 **Docelowy ekran:** mały ekran dotykowy
 
 Projekt jest rozwijany etapami. Obecna architektura stanowi bazę pod dalszą rozbudowę bez konieczności przebudowy całego programu.
+
+                    RPi5
+                     │
+              Debian Trixie
+                     │
+          ┌──────────┴──────────┐
+          │                     │
+       Proxmox                Kiosk
+          │                     │
+    ┌─────┴─────┐           Textual
+    │           │              │
+ Pi-hole      Zigbee          tty3
+
 
 ---
 
