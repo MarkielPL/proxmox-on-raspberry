@@ -11,7 +11,8 @@
 ## 📌 Status projektu
 
 **Wersja:** `0.2.2` -> `0.2.3`
-- > [!NOTE] Sprawdzenie czy migracja z Rich na Textual ma sens. Wykonanie testów. opracowniae wyników. Utworzenie pliku z historią wersji. Wprowadzane zasady:`  
+- > [!NOTE] 
+ - Sprawdzenie czy migracja z Rich na Textual ma sens. Wykonanie testów. opracowniae wyników. Utworzenie pliku z historią wersji. Wprowadzane zasady:`  
 
 `Zasada 1 - UI nigdy nie czyta systemu;`    
 ```
