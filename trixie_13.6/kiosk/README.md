@@ -34,7 +34,6 @@ Projekt jest rozwijany etapami. Obecna architektura stanowi bazę pod dalszą ro
     │           │              │
  Pi-hole      Zigbee          tty3
 
-
 ```
 
 ---
