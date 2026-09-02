@@ -20,7 +20,7 @@
 **Docelowy ekran:** mały ekran dotykowy
 
 Projekt jest rozwijany etapami. Obecna architektura stanowi bazę pod dalszą rozbudowę bez konieczności przebudowy całego programu.
-
+```
                     RPi5
                      │
               Debian Trixie
@@ -32,7 +32,7 @@ Projekt jest rozwijany etapami. Obecna architektura stanowi bazę pod dalszą ro
     ┌─────┴─────┐           Textual
     │           │              │
  Pi-hole      Zigbee          tty3
-
+```
 
 ---
 
