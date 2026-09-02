@@ -143,7 +143,8 @@ Textual zwiększył RAM o X MB i CPU o Y%.
     - 6.8. storage;
     - 6.9. network;
 
-- [ ] Poprawić alerty, docelowo:
+- [ ] Poprawić alerty, docelowo:    
+    ```
     Collector   
        ↓    
     DashboardState  
@@ -153,6 +154,8 @@ Textual zwiększył RAM o X MB i CPU o Y%.
     ┌─────────────┬─────────────┬────────────┐  
     │ UI warning  │ popup       │ log        │  
     └─────────────┴─────────────┴────────────┘  
+    ```
+
 - [ ] Wykonaćtesty i poprawić dokumentację:
     - 7.1. test CPU;
     - 7.2. test RAM;
@@ -243,7 +246,7 @@ Projekt jest rozwijany etapami. Obecna architektura stanowi bazę pod dalszą ro
  Pi-hole      Zigbee          tty3      │           └── proces hosta Debiana
                                         │               └── tty3
 ```
-```
+
 
 ---
 
