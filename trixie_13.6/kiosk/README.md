@@ -12,7 +12,7 @@
 
 **Wersja:** `0.2.2` -> `0.2.3`
 > [!NOTE] 
-> Sprawdzenie czy migracja z Rich na Textual ma sens. Wykonanie testów. opracowniae wyników. Utworzenie pliku z historią wersji. Wprowadzane zasady:`  
+> Sprawdzenie czy migracja z Rich na Textual ma sens. Wykonanie testów. opracownaie wyników. Utworzenie pliku z historią wersji. Wprowadzane zasady:`  
 
 `Zasada 1 - UI nigdy nie czyta systemu;`    
 ```
@@ -26,9 +26,21 @@ panel/widget
  ```
  10 FPS UI ≠ 10 odczytów CPU/s ≠ 10 requestów Proxmox/s
 ```
-`Zasada 3 - `   
-`Zasada 4 - `   
-`Zasada 5 - `   
+`Zasada 3 - Backend nie wie, jaki framework UI go wykorzystuje`   
+```
+collectors
+models
+cache
+manager
+       │
+       ▼
+DashboardState
+       │
+       ├── Rich
+       ├── Textual
+       └── potencjalnie inne UI
+```
+ 
 
 - [ ] 1.1. Przejrzeć `models.py`;  
 - [ ] 1.2. Ustalić ostateczny kontrakt `DashboardState`;
