@@ -3,46 +3,29 @@ services/collector_manager.py
 
 Centralny menedżer collectorów.
 
-Architektura:
+Odpowiada za:
 
-    collectors/
-        ↓
-    services/cache.py
-        ↓
-    CollectorManager
-        ↓
-    DashboardState
-        ↓
-    panels.py
-        ↓
-    dashboard.py
+- uruchamianie collectorów,
+- respektowanie interwałów z config.py,
+- korzystanie z centralnego DataCache,
+- aktualizację DashboardState,
+- obsługę błędów,
+- logowanie błędów.
 
-CollectorManager:
+Manager NIE odpowiada za:
 
-    - uruchamia collectory,
-    - respektuje interwały z config.py,
-    - korzysta z centralnego DataCache,
-    - aktualizuje DashboardState,
-    - izoluje błędy pojedynczych collectorów,
-    - zachowuje ostatnie poprawne dane po błędzie,
-    - nie zawiera logiki UI.
-
-WAŻNE:
-
-Interwały nie są przechowywane tutaj.
-
-Za kontrolę czasu aktualizacji odpowiada:
-
-    services/cache.py
-
-Dzięki temu nie mamy dwóch niezależnych
-mechanizmów odmierzania czasu.
+- Rich,
+- Textual,
+- wygląd UI,
+- layout,
+- formatowanie prezentacji.
 """
 
 from __future__ import annotations
 
 import time
 import traceback
+from collections.abc import Callable
 
 import config
 
@@ -63,27 +46,30 @@ from services.cache import cache
 
 
 # ==========================================================
+# TYPE ALIAS
+# ==========================================================
+
+CollectorCallable = Callable[[], object]
+
+
+# ==========================================================
 # COLLECTOR MANAGER
 # ==========================================================
+
 
 class CollectorManager:
     """
     Centralny menedżer danych dashboardu.
 
-    Manager odpowiada za:
+    Główna zasada:
 
-        1. sprawdzenie cache,
-        2. uruchomienie collectora,
-        3. zapis poprawnego wyniku,
-        4. aktualizację DashboardState,
-        5. obsługę błędów.
-
-    Manager nie odpowiada za:
-
-        - wygląd paneli,
-        - Rich,
-        - formatowanie tekstu,
-        - layout dashboardu.
+        UI refresh
+             ↓
+        CollectorManager
+             ↓
+        cache.needs_update()
+             ↓
+        tylko potrzebne collectory
     """
 
     def __init__(
@@ -96,6 +82,55 @@ class CollectorManager:
             or DashboardState()
         )
 
+        self._collectors: dict[
+            str,
+            tuple[
+                CollectorCallable,
+                Callable[[], float],
+            ],
+        ] = {
+            "cpu": (
+                cpu_collector.collect,
+                lambda: config.CPU_INTERVAL,
+            ),
+            "memory": (
+                memory_collector.collect,
+                lambda: config.RAM_INTERVAL,
+            ),
+            "network": (
+                network_collector.collect,
+                lambda: config.NETWORK_INTERVAL,
+            ),
+            "temperature": (
+                sensor_collector.collect,
+                lambda: config.TEMPERATURE_INTERVAL,
+            ),
+            "fan": (
+                fan_collector.collect,
+                lambda: config.FAN_INTERVAL,
+            ),
+            "storage": (
+                storage_collector.collect,
+                lambda: config.DISK_INTERVAL,
+            ),
+            "nvme": (
+                nvme_collector.collect,
+                lambda: config.NVME_INTERVAL,
+            ),
+            "system": (
+                system_collector.collect,
+                lambda: config.SYSTEM_INTERVAL,
+            ),
+            "proxmox": (
+                proxmox_collector.collect,
+                lambda: config.PROXMOX_INTERVAL,
+            ),
+            "pihole": (
+                pihole_collector.collect,
+                lambda: config.PIHOLE_INTERVAL,
+            ),
+        }
+
     # ======================================================
     # ERROR HANDLING
     # ======================================================
@@ -106,13 +141,10 @@ class CollectorManager:
         exception: Exception,
     ) -> None:
         """
-        Rejestruje błąd collectora.
+        Rejestruje błąd pojedynczego collectora.
 
-        Błąd jednego źródła danych nie może
-        zatrzymać całego dashboardu.
-
-        Ostatnia poprawna wartość pozostaje
-        w cache.
+        Błąd jednego źródła danych nie może zatrzymać
+        całego dashboardu.
         """
 
         error_message = (
@@ -127,18 +159,10 @@ class CollectorManager:
             error_message
         )
 
-        # --------------------------------------------------
-        # Zapis błędu w cache.
-        # --------------------------------------------------
-
         cache.set_error(
             collector_name,
             error_message,
         )
-
-        # --------------------------------------------------
-        # Logowanie.
-        # --------------------------------------------------
 
         if not getattr(
             config,
@@ -148,7 +172,6 @@ class CollectorManager:
             return
 
         try:
-
             config.LOG_DIR.mkdir(
                 parents=True,
                 exist_ok=True,
@@ -176,12 +199,12 @@ class CollectorManager:
                 log.write("\n")
 
         except OSError:
-            # Błąd zapisu logu nie może
+            # Problem z logiem nie może
             # zatrzymać dashboardu.
             pass
 
     # ======================================================
-    # CACHE CHECK
+    # SHOULD UPDATE
     # ======================================================
 
     @staticmethod
@@ -190,8 +213,7 @@ class CollectorManager:
         interval: float,
     ) -> bool:
         """
-        Sprawdza przez centralny cache,
-        czy collector powinien zostać wykonany.
+        Sprawdza centralny cache.
         """
 
         return cache.needs_update(
@@ -200,38 +222,61 @@ class CollectorManager:
         )
 
     # ======================================================
-    # CPU
+    # COLLECTOR ENABLED
+    # ======================================================
+
+    @staticmethod
+    def _collector_enabled(
+        name: str,
+    ) -> bool:
+        """
+        Sprawdza, czy collector powinien działać.
+
+        Integracje UI można wyłączyć przez config.py.
+        """
+
+        if name == "proxmox":
+            return getattr(
+                config,
+                "SHOW_PROXMOX_PANEL",
+                True,
+            )
+
+        if name == "pihole":
+            return getattr(
+                config,
+                "SHOW_PIHOLE_PANEL",
+                True,
+            )
+
+        return True
+
+    # ======================================================
+    # UPDATE CPU
     # ======================================================
 
     def _update_cpu(self) -> None:
         """
-        Aktualizuje informacje o CPU.
+        Aktualizuje CPU.
         """
 
+        name = "cpu"
+
         if not self._should_update(
-            "cpu",
+            name,
             config.CPU_INTERVAL,
         ):
             return
 
+        cache.mark_attempt(name)
+
         try:
-
-            info = (
-                cpu_collector.collect()
-            )
-
-            # --------------------------------------------------
-            # Cache
-            # --------------------------------------------------
+            info = cpu_collector.collect()
 
             cache.set(
-                "cpu",
+                name,
                 info,
             )
-
-            # --------------------------------------------------
-            # Dashboard state
-            # --------------------------------------------------
 
             self.state.cpu = info
 
@@ -240,54 +285,41 @@ class CollectorManager:
             )
 
         except Exception as exc:
-
             self._handle_error(
-                "cpu",
+                name,
                 exc,
             )
 
-    # ==========================================================
-    # MEMORY
-    # ==========================================================
+    # ======================================================
+    # UPDATE MEMORY
+    # ======================================================
 
     def _update_memory(self) -> None:
         """
-        Aktualizuje informacje o RAM i SWAP.
+        Aktualizuje RAM i SWAP.
+
+        Aktualny MemoryInfo zawiera również
+        informacje o SWAP, dlatego collector
+        zwraca jeden obiekt MemoryInfo.
         """
 
+        name = "memory"
+
         if not self._should_update(
-            "memory",
+            name,
             config.RAM_INTERVAL,
         ):
             return
 
+        cache.mark_attempt(name)
+
         try:
-
-            info = (
-                memory_collector.collect()
-            )
-
-            # --------------------------------------------------
-            # Cache
-            # --------------------------------------------------
+            info = memory_collector.collect()
 
             cache.set(
-                "memory",
+                name,
                 info,
             )
-
-            # --------------------------------------------------
-            # Dashboard state
-            #
-            # MemoryInfo zawiera już:
-            #
-            #   swap_total
-            #   swap_used
-            #   swap_free
-            #   swap_percent
-            #
-            # Nie ma osobnego obiektu SwapInfo.
-            # --------------------------------------------------
 
             self.state.memory = info
 
@@ -296,35 +328,35 @@ class CollectorManager:
             )
 
         except Exception as exc:
-
             self._handle_error(
-                "memory",
+                name,
                 exc,
             )
 
     # ======================================================
-    # NETWORK
+    # UPDATE NETWORK
     # ======================================================
 
     def _update_network(self) -> None:
         """
-        Aktualizuje informacje sieciowe.
+        Aktualizuje sieć.
         """
 
+        name = "network"
+
         if not self._should_update(
-            "network",
+            name,
             config.NETWORK_INTERVAL,
         ):
             return
 
-        try:
+        cache.mark_attempt(name)
 
-            info = (
-                network_collector.collect()
-            )
+        try:
+            info = network_collector.collect()
 
             cache.set(
-                "network",
+                name,
                 info,
             )
 
@@ -335,48 +367,46 @@ class CollectorManager:
             )
 
         except Exception as exc:
-
             self._handle_error(
-                "network",
+                name,
                 exc,
             )
 
     # ======================================================
-    # TEMPERATURE
+    # UPDATE TEMPERATURE
     # ======================================================
 
     def _update_temperature(self) -> None:
         """
-        Aktualizuje wszystkie czujniki temperatury.
+        Aktualizuje temperatury.
         """
 
+        name = "temperature"
+
         if not self._should_update(
-            "temperature",
+            name,
             config.TEMPERATURE_INTERVAL,
         ):
             return
 
-        try:
+        cache.mark_attempt(name)
 
-            info = (
-                sensor_collector.collect()
-            )
+        try:
+            info = sensor_collector.collect()
 
             cache.set(
-                "temperature",
+                name,
                 info,
             )
 
             self.state.temperatures = info
 
-            # --------------------------------------------------
-            # Synchronizacja CPU temperature.
-            # --------------------------------------------------
-
+            # Synchronizacja temperatury CPU
+            # z modelem CPU.
             if (
                 info.cpu > 0
+                and self.state.cpu is not None
             ):
-
                 self.state.cpu.temperature = (
                     info.cpu
                 )
@@ -386,113 +416,38 @@ class CollectorManager:
             )
 
         except Exception as exc:
-
             self._handle_error(
-                "temperature",
+                name,
                 exc,
             )
 
     # ======================================================
-    # STORAGE
-    # ======================================================
-
-    def _update_storage(self) -> None:
-        """
-        Aktualizuje informacje o systemach plików.
-        """
-
-        if not self._should_update(
-            "storage",
-            config.DISK_INTERVAL,
-        ):
-            return
-
-        try:
-
-            info = (
-                storage_collector.collect()
-            )
-
-            cache.set(
-                "storage",
-                info,
-            )
-
-            self.state.disks = info
-
-            self.state.storage_updated = (
-                time.monotonic()
-            )
-
-        except Exception as exc:
-
-            self._handle_error(
-                "storage",
-                exc,
-            )
-
-    # ======================================================
-    # NVME
-    # ======================================================
-
-    def _update_nvme(self) -> None:
-        """
-        Aktualizuje informacje o NVMe.
-        """
-
-        if not self._should_update(
-            "nvme",
-            config.NVME_INTERVAL,
-        ):
-            return
-
-        try:
-
-            info = (
-                nvme_collector.collect()
-            )
-
-            cache.set(
-                "nvme",
-                info,
-            )
-
-            self.state.nvme = info
-
-            self.state.nvme_updated = (
-                time.monotonic()
-            )
-
-        except Exception as exc:
-
-            self._handle_error(
-                "nvme",
-                exc,
-            )
-
-    # ======================================================
-    # FAN
+    # UPDATE FAN
     # ======================================================
 
     def _update_fan(self) -> None:
         """
-        Aktualizuje informacje o wentylatorze.
+        Aktualizuje wentylator.
+
+        WAŻNE:
+        Fan używa własnego FAN_INTERVAL.
         """
 
+        name = "fan"
+
         if not self._should_update(
-            "fan",
-            config.TEMPERATURE_INTERVAL,
+            name,
+            config.FAN_INTERVAL,
         ):
             return
 
-        try:
+        cache.mark_attempt(name)
 
-            info = (
-                fan_collector.collect()
-            )
+        try:
+            info = fan_collector.collect()
 
             cache.set(
-                "fan",
+                name,
                 info,
             )
 
@@ -503,35 +458,113 @@ class CollectorManager:
             )
 
         except Exception as exc:
-
             self._handle_error(
-                "fan",
+                name,
                 exc,
             )
 
     # ======================================================
-    # SYSTEM
+    # UPDATE STORAGE
+    # ======================================================
+
+    def _update_storage(self) -> None:
+        """
+        Aktualizuje systemy plików.
+        """
+
+        name = "storage"
+
+        if not self._should_update(
+            name,
+            config.DISK_INTERVAL,
+        ):
+            return
+
+        cache.mark_attempt(name)
+
+        try:
+            info = storage_collector.collect()
+
+            cache.set(
+                name,
+                info,
+            )
+
+            self.state.disks = info
+
+            self.state.storage_updated = (
+                time.monotonic()
+            )
+
+        except Exception as exc:
+            self._handle_error(
+                name,
+                exc,
+            )
+
+    # ======================================================
+    # UPDATE NVME
+    # ======================================================
+
+    def _update_nvme(self) -> None:
+        """
+        Aktualizuje NVMe.
+        """
+
+        name = "nvme"
+
+        if not self._should_update(
+            name,
+            config.NVME_INTERVAL,
+        ):
+            return
+
+        cache.mark_attempt(name)
+
+        try:
+            info = nvme_collector.collect()
+
+            cache.set(
+                name,
+                info,
+            )
+
+            self.state.nvme = info
+
+            self.state.nvme_updated = (
+                time.monotonic()
+            )
+
+        except Exception as exc:
+            self._handle_error(
+                name,
+                exc,
+            )
+
+    # ======================================================
+    # UPDATE SYSTEM
     # ======================================================
 
     def _update_system(self) -> None:
         """
-        Aktualizuje informacje o systemie.
+        Aktualizuje informacje systemowe.
         """
 
+        name = "system"
+
         if not self._should_update(
-            "system",
+            name,
             config.SYSTEM_INTERVAL,
         ):
             return
 
-        try:
+        cache.mark_attempt(name)
 
-            info = (
-                system_collector.collect()
-            )
+        try:
+            info = system_collector.collect()
 
             cache.set(
-                "system",
+                name,
                 info,
             )
 
@@ -542,42 +575,38 @@ class CollectorManager:
             )
 
         except Exception as exc:
-
             self._handle_error(
-                "system",
+                name,
                 exc,
             )
 
     # ======================================================
-    # PROXMOX
+    # UPDATE PROXMOX
     # ======================================================
 
     def _update_proxmox(self) -> None:
         """
-        Aktualizuje informacje o Proxmox VE.
+        Aktualizuje Proxmox.
         """
 
-        if not getattr(
-            config,
-            "SHOW_PROXMOX_PANEL",
-            True,
-        ):
+        name = "proxmox"
+
+        if not self._collector_enabled(name):
             return
 
         if not self._should_update(
-            "proxmox",
+            name,
             config.PROXMOX_INTERVAL,
         ):
             return
 
-        try:
+        cache.mark_attempt(name)
 
-            info = (
-                proxmox_collector.collect()
-            )
+        try:
+            info = proxmox_collector.collect()
 
             cache.set(
-                "proxmox",
+                name,
                 info,
             )
 
@@ -588,42 +617,38 @@ class CollectorManager:
             )
 
         except Exception as exc:
-
             self._handle_error(
-                "proxmox",
+                name,
                 exc,
             )
 
     # ======================================================
-    # PI-HOLE
+    # UPDATE PI-HOLE
     # ======================================================
 
     def _update_pihole(self) -> None:
         """
-        Aktualizuje informacje o Pi-hole.
+        Aktualizuje Pi-hole.
         """
 
-        if not getattr(
-            config,
-            "SHOW_PIHOLE_PANEL",
-            True,
-        ):
+        name = "pihole"
+
+        if not self._collector_enabled(name):
             return
 
         if not self._should_update(
-            "pihole",
+            name,
             config.PIHOLE_INTERVAL,
         ):
             return
 
-        try:
+        cache.mark_attempt(name)
 
-            info = (
-                pihole_collector.collect()
-            )
+        try:
+            info = pihole_collector.collect()
 
             cache.set(
-                "pihole",
+                name,
                 info,
             )
 
@@ -634,9 +659,8 @@ class CollectorManager:
             )
 
         except Exception as exc:
-
             self._handle_error(
-                "pihole",
+                name,
                 exc,
             )
 
@@ -646,56 +670,29 @@ class CollectorManager:
 
     def update(self) -> DashboardState:
         """
-        Aktualizuje wszystkie źródła,
+        Aktualizuje tylko te źródła danych,
         których interwał już minął.
 
-        Zwraca aktualny DashboardState.
-
-        Ponieważ każdy collector posiada własny
-        wpis cache, collectory mogą działać
-        z niezależnymi częstotliwościami.
+        Każdy collector ma niezależny harmonogram.
         """
 
         now = time.monotonic()
 
-        # --------------------------------------------------
-        # Collectory szybkie
-        # --------------------------------------------------
-
         self._update_cpu()
-
         self._update_memory()
-
         self._update_network()
 
-        # --------------------------------------------------
-        # Collectory średniej częstotliwości
-        # --------------------------------------------------
-
         self._update_temperature()
-
         self._update_fan()
-
         self._update_system()
 
-        # --------------------------------------------------
-        # Collectory wolniejsze
-        # --------------------------------------------------
-
         self._update_storage()
-
         self._update_nvme()
 
         self._update_proxmox()
-
         self._update_pihole()
 
-        # --------------------------------------------------
-        # Globalny timestamp.
-        # --------------------------------------------------
-
         self.state.last_update = now
-
         self.state.running = True
 
         return self.state
@@ -706,19 +703,19 @@ class CollectorManager:
 
     def force_update(self) -> DashboardState:
         """
-        Wymusza natychmiastową aktualizację
-        wszystkich collectorów.
-    
-        Ostatnie poprawne dane pozostają w cache.
+        Wymusza aktualizację wszystkich collectorów.
+
+        Czyszczenie cache powoduje, że każdy collector
+        zostanie potraktowany jako wymagający aktualizacji.
         """
-    
-        cache.invalidate()
-    
+
+        cache.clear()
+
         return self.update()
 
 
 # ==========================================================
-# GLOBALNY MANAGER
+# GLOBAL MANAGER
 # ==========================================================
 
 collector_manager = CollectorManager()

@@ -1,38 +1,24 @@
 """
 services/cache.py
 
-Pamięć podręczna danych Raspberry Pi Kiosk Dashboard.
+Centralny cache danych dashboardu.
 
-Cache przechowuje ostatnie poprawne wyniki collectorów
-oraz kontroluje interwały ich aktualizacji.
+Odpowiada za:
 
-Architektura:
+- przechowywanie ostatniej poprawnej wartości,
+- kontrolowanie interwałów aktualizacji,
+- przechowywanie czasu ostatniej próby,
+- przechowywanie czasu ostatniego sukcesu,
+- przechowywanie błędów,
+- zachowanie ostatnich poprawnych danych po błędzie.
 
-    collectors
-         ↓
-       cache
-         ↓
-    collector_manager
-         ↓
-    DashboardState
-         ↓
-       panels
-         ↓
-     dashboard
+WAŻNA ZASADA:
 
-Założenia:
+Częstotliwość odświeżania UI nie jest częstotliwością
+pobierania danych.
 
-    - ostatnia poprawna wartość pozostaje dostępna
-      nawet po chwilowym błędzie collectora,
-
-    - błąd nie usuwa poprzednich danych,
-
-    - każdy collector może posiadać własny interwał,
-
-    - UI może odświeżać się często bez wykonywania
-      ciężkich operacji przy każdym odświeżeniu,
-
-    - cache nie zawiera żadnego kodu Rich/UI.
+UI może odświeżać się często, natomiast każdy collector
+posiada własny interwał.
 """
 
 from __future__ import annotations
@@ -46,31 +32,41 @@ from typing import Any
 # CACHE ENTRY
 # ==========================================================
 
+
 @dataclass
 class CacheEntry:
     """
-    Pojedynczy wpis pamięci podręcznej.
+    Pojedynczy wpis cache.
 
     value:
-        Ostatnia poprawnie pobrana wartość.
+        Ostatnia poprawna wartość.
 
-    updated:
-        Czas monotoniczny ostatniej poprawnej aktualizacji.
+    last_attempt:
+        Czas ostatniej próby wykonania collectora.
 
-    error:
-        Ostatni błąd związany z tym źródłem.
+    last_success:
+        Czas ostatniego poprawnego wykonania.
+
+    last_error:
+        Ostatni komunikat błędu.
+
+    error_at:
+        Czas wystąpienia ostatniego błędu.
     """
 
     value: Any = None
 
-    updated: float = 0.0
+    last_attempt: float | None = None
+    last_success: float | None = None
 
-    error: str = ""
+    last_error: str | None = None
+    error_at: float | None = None
 
 
 # ==========================================================
 # DATA CACHE
 # ==========================================================
+
 
 class DataCache:
     """
@@ -78,116 +74,237 @@ class DataCache:
     """
 
     def __init__(self) -> None:
-
-        self._data: dict[
-            str,
-            CacheEntry,
-        ] = {}
+        self._entries: dict[str, CacheEntry] = {}
 
     # ======================================================
-    # SET
+    # INTERNAL
+    # ======================================================
+
+    def _get_entry(
+        self,
+        name: str,
+    ) -> CacheEntry:
+        """
+        Pobiera istniejący wpis lub tworzy nowy.
+        """
+
+        if name not in self._entries:
+            self._entries[name] = CacheEntry()
+
+        return self._entries[name]
+
+    # ======================================================
+    # SHOULD UPDATE
+    # ======================================================
+
+    def needs_update(
+        self,
+        name: str,
+        interval: float,
+    ) -> bool:
+        """
+        Sprawdza, czy collector powinien zostać wykonany.
+
+        Decyzja opiera się na czasie ostatniej próby,
+        a nie wyłącznie na czasie ostatniego sukcesu.
+
+        Dzięki temu chwilowy błąd API nie powoduje
+        wielokrotnych prób w każdym cyklu UI.
+        """
+
+        if interval < 0:
+            raise ValueError(
+                "Cache interval cannot be negative."
+            )
+
+        entry = self._get_entry(name)
+
+        if entry.last_attempt is None:
+            return True
+
+        elapsed = (
+            time.monotonic()
+            - entry.last_attempt
+        )
+
+        return elapsed >= interval
+
+    # ======================================================
+    # MARK ATTEMPT
+    # ======================================================
+
+    def mark_attempt(
+        self,
+        name: str,
+        timestamp: float | None = None,
+    ) -> None:
+        """
+        Rejestruje rozpoczęcie próby aktualizacji.
+        """
+
+        entry = self._get_entry(name)
+
+        entry.last_attempt = (
+            timestamp
+            if timestamp is not None
+            else time.monotonic()
+        )
+
+    # ======================================================
+    # SET VALUE
     # ======================================================
 
     def set(
         self,
-        key: str,
+        name: str,
         value: Any,
+        timestamp: float | None = None,
     ) -> None:
         """
-        Zapisuje nową poprawną wartość.
+        Zapisuje poprawną wartość.
 
-        Poprawna aktualizacja:
-
-            - aktualizuje value,
-            - aktualizuje timestamp,
-            - kasuje poprzedni błąd.
+        Ostatnia poprawna wartość zastępuje poprzednią.
         """
 
-        entry = self._data.get(
-            key
+        now = (
+            timestamp
+            if timestamp is not None
+            else time.monotonic()
         )
 
-        if entry is None:
-
-            entry = CacheEntry()
-
-            self._data[key] = entry
+        entry = self._get_entry(name)
 
         entry.value = value
+        entry.last_success = now
+        entry.last_attempt = now
 
-        entry.updated = time.monotonic()
-
-        # Poprawny odczyt kasuje
-        # poprzedni błąd.
-
-        entry.error = ""
+        # Poprawna aktualizacja kasuje poprzedni błąd.
+        entry.last_error = None
+        entry.error_at = None
 
     # ======================================================
-    # GET
+    # GET VALUE
     # ======================================================
 
     def get(
         self,
-        key: str,
+        name: str,
         default: Any = None,
     ) -> Any:
         """
-        Zwraca ostatnią wartość.
-
-        Jeżeli wartość nie istnieje,
-        zwracany jest default.
+        Zwraca ostatnią poprawną wartość.
         """
 
-        entry = self._data.get(
-            key
-        )
+        entry = self._entries.get(name)
 
         if entry is None:
+            return default
 
+        if entry.value is None:
             return default
 
         return entry.value
 
     # ======================================================
-    # GET ENTRY
+    # HAS VALUE
+    # ======================================================
+
+    def has(
+        self,
+        name: str,
+    ) -> bool:
+        """
+        Sprawdza, czy cache posiada poprawną wartość.
+        """
+
+        entry = self._entries.get(name)
+
+        return (
+            entry is not None
+            and entry.value is not None
+        )
+
+    # ======================================================
+    # ERROR
+    # ======================================================
+
+    def set_error(
+        self,
+        name: str,
+        error: str,
+        timestamp: float | None = None,
+    ) -> None:
+        """
+        Zapisuje błąd collectora.
+
+        Ostatnia poprawna wartość pozostaje bez zmian.
+        """
+
+        now = (
+            timestamp
+            if timestamp is not None
+            else time.monotonic()
+        )
+
+        entry = self._get_entry(name)
+
+        entry.last_attempt = now
+        entry.last_error = error
+        entry.error_at = now
+
+    # ======================================================
+    # ENTRY
     # ======================================================
 
     def get_entry(
         self,
-        key: str,
+        name: str,
     ) -> CacheEntry | None:
         """
-        Zwraca kompletny wpis cache.
+        Zwraca pełny wpis cache.
+
+        Przydatne później dla UI i diagnostyki.
         """
 
-        return self._data.get(
-            key
-        )
+        return self._entries.get(name)
 
     # ======================================================
-    # UPDATED
+    # LAST SUCCESS
     # ======================================================
 
-    def updated(
+    def last_success(
         self,
-        key: str,
-    ) -> float:
+        name: str,
+    ) -> float | None:
         """
-        Zwraca czas ostatniej poprawnej aktualizacji.
-
-        Jeżeli dane nigdy nie zostały pobrane,
-        zwracane jest 0.0.
+        Zwraca timestamp ostatniego sukcesu.
         """
 
-        entry = self._data.get(
-            key
-        )
+        entry = self._entries.get(name)
 
         if entry is None:
+            return None
 
-            return 0.0
+        return entry.last_success
 
-        return entry.updated
+    # ======================================================
+    # LAST ERROR
+    # ======================================================
+
+    def last_error(
+        self,
+        name: str,
+    ) -> str | None:
+        """
+        Zwraca ostatni błąd.
+        """
+
+        entry = self._entries.get(name)
+
+        if entry is None:
+            return None
+
+        return entry.last_error
 
     # ======================================================
     # AGE
@@ -195,312 +312,49 @@ class DataCache:
 
     def age(
         self,
-        key: str,
-    ) -> float:
+        name: str,
+    ) -> float | None:
         """
-        Zwraca wiek danych w sekundach.
-
-        Brak danych:
-
-            inf
+        Zwraca wiek ostatniej poprawnej wartości
+        w sekundach.
         """
 
-        updated = self.updated(
-            key
-        )
+        success = self.last_success(name)
 
-        if updated <= 0:
-
-            return float("inf")
+        if success is None:
+            return None
 
         return max(
             0.0,
-            time.monotonic() - updated,
+            time.monotonic() - success,
         )
 
-    # ======================================================
-    # NEEDS UPDATE
-    # ======================================================
-
-    def needs_update(
-        self,
-        key: str,
-        interval: float,
-    ) -> bool:
-        """
-        Sprawdza, czy dane wymagają aktualizacji.
-
-        Aktualizacja jest wymagana gdy:
-
-            1. wpis nie istnieje,
-
-            2. wartość nigdy nie została
-               poprawnie pobrana,
-
-            3. interwał jest równy lub mniejszy
-               od zera,
-
-            4. upłynął określony interwał.
-        """
-
-        entry = self._data.get(
-            key
-        )
-
-        if entry is None:
-
-            return True
-
-        if entry.updated <= 0:
-
-            return True
-
-        if interval <= 0:
-
-            return True
-
-        return (
-            time.monotonic()
-            - entry.updated
-            >= interval
-        )
-
-    # ======================================================
-    # SET ERROR
-    # ======================================================
-
-    def set_error(
-        self,
-        key: str,
-        error: str,
-    ) -> None:
-        """
-        Zapisuje błąd collectora.
-
-        Istniejąca poprawna wartość
-        pozostaje zachowana.
-        """
-
-        entry = self._data.get(
-            key
-        )
-
-        if entry is None:
-
-            entry = CacheEntry()
-
-            self._data[key] = entry
-
-        entry.error = error
-
-    # ======================================================
-    # GET ERROR
-    # ======================================================
-
-    def get_error(
-        self,
-        key: str,
-    ) -> str:
-        """
-        Zwraca ostatni błąd.
-        """
-
-        entry = self._data.get(
-            key
-        )
-
-        if entry is None:
-
-            return ""
-
-        return entry.error
-
-    # ======================================================
-    # HAS DATA
-    # ======================================================
-
-    def has(
-        self,
-        key: str,
-    ) -> bool:
-        """
-        Sprawdza, czy cache zawiera wartość.
-        """
-
-        entry = self._data.get(
-            key
-        )
-
-        if entry is None:
-
-            return False
-
-        return entry.value is not None
-
-    # ======================================================
-    # IS STALE
-    # ======================================================
-
-    def is_stale(
-        self,
-        key: str,
-        max_age: float,
-    ) -> bool:
-        """
-        Sprawdza, czy dane są starsze
-        niż dopuszczalny czas.
-
-        Jest to przydatne dla UI.
-
-        Przykład:
-
-            cache.is_stale(
-                "proxmox",
-                30,
-            )
-        """
-
-        return self.age(
-            key
-        ) > max_age
-
-    # ==========================================================
-    # INVALIDATE
-    # ==========================================================
-    
-    def invalidate(
-        self,
-        key: str | None = None,
-    ) -> None:
-        """
-        Wymusza ponowną aktualizację danych.
-    
-        W przeciwieństwie do clear():
-    
-            - nie usuwa wartości,
-            - nie usuwa danych diagnostycznych,
-            - zeruje timestamp aktualizacji.
-    
-        Dzięki temu collector przy następnym wywołaniu
-        zostanie wykonany ponownie, ale ostatnia poprawna
-        wartość pozostaje dostępna.
-        """
-    
-        if key is None:
-        
-            for entry in self._data.values():
-                entry.updated = 0.0
-    
-            return
-    
-        entry = self._data.get(
-            key
-        )
-    
-        if entry is not None:
-        
-            entry.updated = 0.0
-    
     # ======================================================
     # CLEAR
     # ======================================================
 
     def clear(
         self,
-        key: str | None = None,
+        name: str | None = None,
     ) -> None:
         """
-        Usuwa dane z cache.
+        Czyści cache.
 
-        key=None:
+        name=None:
             czyści cały cache.
 
-        key="cpu":
+        name="cpu":
             czyści tylko CPU.
         """
 
-        if key is None:
-
-            self._data.clear()
-
+        if name is None:
+            self._entries.clear()
             return
 
-        self._data.pop(
-            key,
+        self._entries.pop(
+            name,
             None,
         )
-
-    # ======================================================
-    # KEYS
-    # ======================================================
-
-    def keys(self) -> list[str]:
-        """
-        Zwraca listę wszystkich kluczy.
-        """
-
-        return list(
-            self._data.keys()
-        )
-
-    # ======================================================
-    # SNAPSHOT
-    # ======================================================
-
-    def snapshot(self) -> dict[str, Any]:
-        """
-        Zwraca prosty snapshot danych cache.
-
-        Przydatne podczas diagnostyki
-        oraz testów.
-        """
-
-        return {
-            key: entry.value
-            for key, entry
-            in self._data.items()
-        }
-
-    # ======================================================
-    # STATUS
-    # ======================================================
-
-    def status(
-        self,
-    ) -> dict[str, dict]:
-        """
-        Zwraca informacje diagnostyczne
-        dotyczące wszystkich wpisów.
-        """
-
-        result: dict[
-            str,
-            dict,
-        ] = {}
-
-        for key, entry in self._data.items():
-
-            result[key] = {
-
-                "has_data": (
-                    entry.value
-                    is not None
-                ),
-
-                "age": self.age(
-                    key
-                ),
-
-                "updated": (
-                    entry.updated
-                ),
-
-                "error": (
-                    entry.error
-                ),
-            }
-
-        return result
 
 
 # ==========================================================

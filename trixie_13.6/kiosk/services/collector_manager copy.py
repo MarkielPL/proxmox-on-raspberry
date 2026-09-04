@@ -246,9 +246,9 @@ class CollectorManager:
                 exc,
             )
 
-    # ======================================================
+    # ==========================================================
     # MEMORY
-    # ======================================================
+    # ==========================================================
 
     def _update_memory(self) -> None:
         """
@@ -263,56 +263,33 @@ class CollectorManager:
 
         try:
 
-            memory, swap = (
+            info = (
                 memory_collector.collect()
             )
 
             # --------------------------------------------------
-            # Cache RAM
+            # Cache
             # --------------------------------------------------
 
             cache.set(
                 "memory",
-                memory,
-            )
-
-            # --------------------------------------------------
-            # Cache SWAP
-            # --------------------------------------------------
-
-            cache.set(
-                "swap",
-                swap,
+                info,
             )
 
             # --------------------------------------------------
             # Dashboard state
-            # --------------------------------------------------
-
-            self.state.memory = memory
-
-            # --------------------------------------------------
-            # Synchronizacja SWAP.
             #
-            # models.py posiada pola SWAP
-            # w MemoryInfo.
+            # MemoryInfo zawiera już:
+            #
+            #   swap_total
+            #   swap_used
+            #   swap_free
+            #   swap_percent
+            #
+            # Nie ma osobnego obiektu SwapInfo.
             # --------------------------------------------------
 
-            self.state.memory.swap_total = (
-                swap.total
-            )
-
-            self.state.memory.swap_used = (
-                swap.used
-            )
-
-            self.state.memory.swap_free = (
-                swap.free
-            )
-
-            self.state.memory.swap_percent = (
-                swap.percent
-            )
+            self.state.memory = info
 
             self.state.memory_updated = (
                 time.monotonic()
@@ -731,15 +708,12 @@ class CollectorManager:
         """
         Wymusza natychmiastową aktualizację
         wszystkich collectorów.
-
-        Nie posiada własnego mechanizmu czasu.
-
-        Po prostu czyści cache aktualizacji,
-        dzięki czemu needs_update() zwróci True.
+    
+        Ostatnie poprawne dane pozostają w cache.
         """
-
-        cache.clear()
-
+    
+        cache.invalidate()
+    
         return self.update()
 
 
