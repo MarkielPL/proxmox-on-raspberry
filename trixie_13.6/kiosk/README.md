@@ -250,271 +250,66 @@ Projekt jest rozwijany etapami. Obecna architektura stanowi bazę pod dalszą ro
 
 ---
 
-# 1. 🎯 Cel projektu
-
-Raspberry Pi Kiosk Dashboard ma prezentować w jednym, czytelnym interfejsie najważniejsze informacje dotyczące urządzenia.
-
-Dashboard obecnie obsługuje m.in.:
-
-- obciążenie CPU,
-- obciążenie poszczególnych rdzeni,
-- temperatury,
-- pamięć RAM,
-- SWAP,
-- sieć,
-- adres IP,
-- ping i dostęp do Internetu,
-- systemy plików i zajętość dysków,
-- temperaturę oraz stan NVMe,
-- wentylator PWM / RPM,
-- Proxmox VE,
-- kontener Pi-hole,
-- status Pi-hole,
-- uptime,
-- informacje systemowe,
-- obsługę błędów collectorów,
-- centralny cache danych,
-- niezależne interwały aktualizacji,
-- logowanie błędów.
-
-Warstwa prezentacji korzysta z biblioteki **Rich**, dzięki czemu interfejs może być renderowany bezpośrednio w terminalu.
-
----
-
-# 2. 🏗️ Architektura projektu
-
-Projekt jest podzielony na kilka odpowiedzialności:
-
-```text
-┌──────────────────────────────┐
-│         SYSTEM / HW          │
-│                              │
-│ psutil / /proc / /sys        │
-│ Proxmox API                  │
-│ Pi-hole API                  │
-└──────────────┬───────────────┘
-               │
-               ▼
-┌──────────────────────────────┐
-│         collectors/          │
-│                              │
-│ CPU                          │
-│ Memory                       │
-│ Network                      │
-│ Sensors                      │
-│ Fan                          │
-│ Storage                      │
-│ NVMe                         │
-│ System                       │
-│ Proxmox                      │
-│ Pi-hole                      │
-└──────────────┬───────────────┘
-               │
-               ▼
-┌──────────────────────────────┐
-│       services/cache.py      │
-│                              │
-│ centralny cache              │
-│ interwały aktualizacji       │
-│ ostatnie poprawne dane       │
-│ błędy                        │
-└──────────────┬───────────────┘
-               │
-               ▼
-┌──────────────────────────────┐
-│ services/collector_manager.py│
-│                              │
-│ orkiestracja collectorów     │
-│ obsługa błędów               │
-│ aktualizacja DashboardState  │
-└──────────────┬───────────────┘
-               │
-               ▼
-┌──────────────────────────────┐
-│           models.py          │
-│                              │
-│ DashboardState               │
-│ CPUInfo / MemoryInfo / ...   │
-└──────────────┬───────────────┘
-               │
-               ▼
-┌──────────────────────────────┐
-│           panels.py          │
-│                              │
-│ Rich Panels                  │
-│ Tables                       │
-│ Layout                       │
-│ formatowanie danych          │
-└──────────────┬───────────────┘
-               │
-               ▼
-┌──────────────────────────────┐
-│         dashboard.py         │
-│                              │
-│ Live                         │
-│ główna pętla                 │
-│ odświeżanie UI               │
-└──────────────────────────────┘
-```
-
-### Główna zasada
-
-**Collector nie powinien wiedzieć nic o wyglądzie dashboardu.**
-
-**Panel nie powinien wiedzieć, skąd pochodzą dane.**
-
-**Dashboard nie powinien implementować logiki pobierania danych.**
-
-Dzięki temu można rozwijać poszczególne elementy niezależnie.
-
----
-
-# 3. 🔄 Schemat przepływu danych
-
-```text
-              SYSTEM
-                 │
-                 ▼
-        ┌─────────────────┐
-        │    Collector    │
-        └────────┬────────┘
-                 │
-                 │ wynik
-                 ▼
-        ┌─────────────────┐
-        │      Cache      │
-        └────────┬────────┘
-                 │
-                 │ aktualna wartość
-                 ▼
-        ┌─────────────────┐
-        │ CollectorManager│
-        └────────┬────────┘
-                 │
-                 │ model danych
-                 ▼
-        ┌─────────────────┐
-        │ DashboardState  │
-        └────────┬────────┘
-                 │
-                 ▼
-        ┌─────────────────┐
-        │     panels.py   │
-        └────────┬────────┘
-                 │
-                 │ Rich Layout
-                 ▼
-        ┌─────────────────┐
-        │   dashboard.py  │
-        └────────┬────────┘
-                 │
-                 ▼
-              TERMINAL
-```
-
----
-
-# 4. 🧠 Schemat logiki programu
-
-Program pracuje w cyklu:
-
-```text
-START
-  │
-  ▼
-Załaduj config.py
-  │
-  ▼
-Utwórz CollectorManager / DashboardState
-  │
-  ▼
-Pierwsza aktualizacja danych
-  │
-  ▼
-Utwórz Rich Live
-  │
-  ▼
-┌────────────────────────────────┐
-│          GŁÓWNA PĘTLA          │
-│                                │
-│  1. Sprawdź interwały          │
-│  2. Uruchom wymagane collectory│
-│  3. Zapisz wyniki do cache     │
-│  4. Zaktualizuj state          │
-│  5. Zbuduj layout              │
-│  6. Renderuj Live              │
-│  7. Odczekaj do kolejnego cyklu│
-│                                │
-└───────────────┬────────────────┘
-                │
-                └──────────────► powtórz
-```
-
-Każdy collector może działać z własnym interwałem.
-
-Przykładowo:
-
-```text
-CPU          → 1 s
-Network      → 1 s
-RAM          → 2 s
-Fan          → 2 s
-Temperature  → 5 s
-NVMe         → 5 s
-System       → 5 s
-Proxmox      → 5 s
-Pi-hole      → 10 s
-Storage      → 60 s
-```
-
-Dzięki temu nie ma potrzeby wykonywania cięższych operacji przy każdym odświeżeniu interfejsu.
-
----
-
-# 5. 📁 Drzewo projektu
+# 📁 Tree
 
 Aktualne drzewo projektu przedstawia się następująco:
 
-```text
-kiosk/
-│
-├── config.py
-├── dashboard.py
-├── models.py
-├── panels.py
-│
-├── collectors/
-│   ├── __init__.py
-│   ├── cpu.py
-│   ├── fan.py
-│   ├── memory.py
-│   ├── network.py
-│   ├── nvme.py
-│   ├── pihole.py
-│   ├── proxmox.py
-│   ├── sensors.py
-│   ├── storage.py
-│   └── system.py
-│
-├── services/
-│   ├── __init__.py
-│   ├── cache.py
-│   └── collector_manager.py
-│
-├── assets/
-│   ├── fonts/
-│   │   ├── JetBrainsMonoNLNerdFontMono-LightItalic.ttf
-│   │   └── SymbolsNerdFont-Regular.ttf
-│   │
-│   ├── images/
-│   │
-│   └── icons/
-│
-└── logs/
-    └── dashboard.log
-```
-
-> `logs/` oraz zawartość katalogów `assets/images/` i `assets/icons/` mogą zmieniać się w czasie działania projektu.
+> kiosk/        
+> │     
+> ├── dashboard.py              ← entry point     
+> ├── config.py                 ← konfiguracja  
+> ├── models.py                 ← dane  
+> ├── requirements.txt  
+> │     
+> ├── collectors/       
+> │   ├── cpu.py                    
+> │   ├── memory.py             
+> │   ├── network.py                
+> │   ├── storage.py                
+> │   ├── sensors.py                
+> │   ├── fan.py                
+> │   ├── nvme.py               
+> │   ├── proxmox.py                
+> │   ├── pihole.py             
+> │   └── system.py             
+> │             
+> ├── services/             
+> │   ├── cache.py              
+> │   └── collector_manager.py              
+> │             
+> ├── ui/               
+> │   ├── app.py                
+> │   │             
+> │   ├── screens/              
+> │   │   └── dashboard.py              
+> │   │             
+> │   ├── widgets/              
+> │   │   ├── cpu.py                
+> │   │   ├── memory.py             
+> │   │   ├── network.py                
+> │   │   ├── temperature.py                
+> │   │   ├── fan.py                
+> │   │   ├── storage.py                
+> │   │   ├── nvme.py               
+> │   │   ├── pihole.py             
+> │   │   ├── proxmox.py                
+> │   │   └── system.py             
+> │   │             
+> │   └── styles/               
+> │       └── dashboard.tcss                
+> │             
+> ├── assets/               
+> │   ├── fonts/                
+> │   ├── images/               
+> │   └── icons/                
+> │             
+> ├── logs/             
+> │   └── dashboard.log             
+> │             
+> └── tests/                
+>     ├── collectors/               
+>     ├── services/             
+>     └── ui/               
 
 ---
 
