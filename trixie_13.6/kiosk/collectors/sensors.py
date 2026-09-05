@@ -1,20 +1,27 @@
 """
-collectors/sensors.py
-
 Monitoring temperatur Raspberry Pi.
 
 Źródła:
+
     /sys/class/thermal
     /sys/class/hwmon
     psutil.sensors_temperatures()
 
+Priorytet źródeł:
+
+    1. /sys/class/thermal
+    2. /sys/class/hwmon
+    3. psutil jako fallback
+
 Obsługiwane między innymi:
+
     cpu_thermal
     nvme
     rp1_adc
     rpi_volt
     pwmfan
 """
+
 
 from __future__ import annotations
 
@@ -23,6 +30,7 @@ from pathlib import Path
 import psutil
 
 import config
+
 from models import (
     TemperatureInfo,
     TemperaturesInfo,
@@ -68,6 +76,7 @@ class SensorCollector:
             OSError,
             ValueError,
         ):
+
             return None
 
     # ======================================================
@@ -224,6 +233,8 @@ class SensorCollector:
     def _collect_psutil() -> list[TemperatureInfo]:
         """
         Odczytuje temperatury dostępne przez psutil.
+
+        psutil jest traktowane jako fallback.
         """
 
         result: list[TemperatureInfo] = []
@@ -274,91 +285,129 @@ class SensorCollector:
         return result
 
     # ======================================================
+    # DEDUPLICATION
+    # ======================================================
+
+    @staticmethod
+    def _deduplicate(
+        sensors: list[TemperatureInfo],
+    ) -> list[TemperatureInfo]:
+        """
+        Usuwa duplikaty sensorów.
+
+        Priorytet:
+
+        - pierwszy sensor zachowuje miejsce,
+        - identyczna nazwa prezentacyjna nie jest
+          dodawana ponownie.
+
+        Dzięki temu np. CPU wykryte przez:
+
+            thermal_zone
+            hwmon
+            psutil
+
+        nie pojawi się trzy razy.
+        """
+
+        result: list[TemperatureInfo] = []
+
+        seen_names: set[str] = set()
+
+        for item in sensors:
+
+            name = item.name.strip()
+
+            if not name:
+                continue
+
+            key = name.lower()
+
+            if key in seen_names:
+                continue
+
+            seen_names.add(key)
+            result.append(item)
+
+        return result
+
+    # ======================================================
     # COLLECT
     # ======================================================
 
     def collect(self) -> TemperaturesInfo:
         """
         Pobiera kompletny stan temperatur.
+
+        Preferowane są bezpośrednie źródła sysfs.
+
+        psutil jest używane tylko jako fallback,
+        jeżeli sysfs nie dostarczył żadnych danych.
         """
 
         info = TemperaturesInfo()
 
-        sensors: list[
-            TemperatureInfo
-        ] = []
+        sensors: list[TemperatureInfo] = []
 
-        sensors.extend(
+        # --------------------------------------------------
+        # 1. THERMAL ZONES
+        # --------------------------------------------------
+
+        thermal_sensors = (
             self._collect_thermal_zones()
         )
 
         sensors.extend(
+            thermal_sensors
+        )
+
+        # --------------------------------------------------
+        # 2. HWMON
+        # --------------------------------------------------
+
+        hwmon_sensors = (
             self._collect_hwmon()
         )
 
-        # psutil dodajemy tylko wtedy,
-        # gdy nie ma już identycznego źródła.
-
-        psutil_sensors = (
-            self._collect_psutil()
+        sensors.extend(
+            hwmon_sensors
         )
 
-        existing = {
-            (
-                item.source,
-                item.sensor,
-            )
-            for item in sensors
-        }
-
-        for item in psutil_sensors:
-
-            key = (
-                item.source,
-                item.sensor,
-            )
-
-            if key not in existing:
-                sensors.append(item)
-
         # --------------------------------------------------
-        # Usunięcie oczywistych duplikatów
+        # 3. PSUTIL FALLBACK
         # --------------------------------------------------
 
-        unique: list[
-            TemperatureInfo
-        ] = []
+        # Jeżeli sysfs nie dostarczył żadnych danych,
+        # dopiero wtedy korzystamy z psutil.
 
-        seen: set[
-            tuple[str, str]
-        ] = set()
+        if not sensors:
 
-        for item in sensors:
-
-            key = (
-                item.name,
-                item.sensor,
+            sensors.extend(
+                self._collect_psutil()
             )
 
-            if key in seen:
-                continue
+        # --------------------------------------------------
+        # DEDUPLIKACJA
+        # --------------------------------------------------
 
-            seen.add(key)
-            unique.append(item)
+        unique = self._deduplicate(
+            sensors
+        )
 
         info.sensors = unique
 
         # --------------------------------------------------
-        # Kategorie główne
+        # KATEGORIE GŁÓWNE
         # --------------------------------------------------
 
         for sensor in unique:
 
-            name = sensor.name.lower()
+            name = sensor.name.strip().lower()
 
             if name == "cpu":
 
                 if info.cpu == 0.0:
+
                     info.cpu = (
                         sensor.temperature
                     )
@@ -366,6 +415,7 @@ class SensorCollector:
             elif name == "nvme":
 
                 if info.nvme == 0.0:
+
                     info.nvme = (
                         sensor.temperature
                     )
@@ -373,6 +423,7 @@ class SensorCollector:
             elif name == "rp1":
 
                 if info.rp1 == 0.0:
+
                     info.rp1 = (
                         sensor.temperature
                     )
@@ -382,6 +433,7 @@ class SensorCollector:
                 # Voltage nie powinien być
                 # temperaturą, ale pozostawiamy
                 # zgodność z konfiguracją.
+
                 info.voltage = (
                     sensor.temperature
                 )

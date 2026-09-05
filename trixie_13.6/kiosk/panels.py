@@ -15,29 +15,29 @@ Ten moduł:
 Cała logika pobierania danych znajduje się w collectors/.
 Cache danych znajduje się w services/cache.py.
 
-nadchodząca zmiana:
-- panels.py odpowiada za to, jakie znaki są wyświetlane, a system/TTY odpowiada za to, jak wyglądają te znaki.
-    Dzięki temu później możemy zmieniać:
-    - font,
-    - rozmiar fontu,
-    - Nerd Font,
-    - wygląd terminala,
+panels.py odpowiada wyłącznie za prezentację danych.
+System / TTY odpowiada za sposób wyświetlania znaków.
 
-bez zmieniania layoutu dashboardu.
+Dzięki temu później możemy zmieniać:
+
+- font,
+- rozmiar fontu,
+- Nerd Font,
+- wygląd terminala,
+
+bez zmieniania logiki layoutu dashboardu.
 """
 
 
 from __future__ import annotations
 
 import shutil
-import socket
 from datetime import datetime
 
 from rich.align import Align
 from rich.console import Group
 from rich.layout import Layout
 from rich.panel import Panel
-from rich.progress import BarColumn, Progress, TextColumn
 from rich.table import Table
 from rich.text import Text
 
@@ -51,10 +51,8 @@ from models import (
     NetworkInfo,
     NvmeInfo,
     PiHoleInfo,
-    ProxmoxContainerInfo,
     ProxmoxInfo,
     SystemInfo,
-    TemperatureInfo,
     TemperaturesInfo,
 )
 
@@ -264,13 +262,15 @@ def simple_panel(
     )
 
 
-def get_terminal_size():
+def get_terminal_size() -> tuple[int, int]:
     """
     Zwraca aktualny rozmiar terminala.
 
     Rich pracuje w kolumnach i wierszach, a nie
-    w pikselach. Rozmiar jest pobierany bezpośrednio
-    z terminala, na którym działa dashboard.
+    w pikselach.
+
+    Rozmiar jest pobierany bezpośrednio z terminala,
+    na którym działa dashboard.
     """
 
     size = shutil.get_terminal_size(
@@ -292,12 +292,14 @@ def get_terminal_size():
 
     return width, height
 
-def get_layout_mode():
+
+def get_layout_mode() -> str:
     """
     Określa sposób rozmieszczenia paneli na podstawie
     rzeczywistego rozmiaru terminala.
 
     Zwraca:
+
         "two_columns"
         "one_column"
     """
@@ -314,6 +316,7 @@ def get_layout_mode():
         return "one_column"
 
     return "two_columns"
+
 
 # ==========================================================
 # CPU
@@ -434,6 +437,13 @@ def create_memory_panel(
 ) -> Panel:
     """
     Panel RAM.
+
+    Celowo używamy statycznego paska tekstowego
+    zamiast Rich Progress.
+
+    Panel jest renderowany przez nadrzędny Live,
+    więc nie potrzebujemy tutaj kolejnego mechanizmu
+    odświeżania.
     """
 
     color = value_color(
@@ -442,40 +452,31 @@ def create_memory_panel(
         config.RAM_CRITICAL,
     )
 
-    progress = Progress(
-        TextColumn(
-            f"[{config.COLOR_RAM}]RAM[/]"
-        ),
-        BarColumn(
-            bar_width=config.RAM_BAR_WIDTH,
-            complete_style=color,
-            finished_style=color,
-        ),
-        TextColumn(
-            f"[{color}]"
-            f"{memory.percent:.1f}%"
-            f"[/]"
-        ),
-        expand=True,
+    bar = make_bar(
+        memory.percent,
+        config.RAM_BAR_WIDTH,
+        color,
     )
 
-    progress.add_task(
-        "RAM",
-        total=100,
-        completed=memory.percent,
+    percentage = Text(
+        f"{memory.percent:.1f}%",
+        style=color,
+        justify="center",
+    )
+
+    usage = Text(
+        (
+            f"{format_bytes(memory.used)}"
+            f" / "
+            f"{format_bytes(memory.total)}"
+        ),
+        justify="center",
     )
 
     content = Group(
-        progress,
-        Align.center(
-            Text(
-                (
-                    f"{format_bytes(memory.used)}"
-                    f" / "
-                    f"{format_bytes(memory.total)}"
-                )
-            )
-        ),
+        Align.center(bar),
+        Align.center(percentage),
+        Align.center(usage),
     )
 
     return simple_panel(
@@ -613,33 +614,18 @@ def create_temperature_panel(
 
     for sensor in temperatures.sensors:
 
-        warning = (
-            config.CPU_TEMP_WARNING
-        )
-
-        critical = (
-            config.CPU_TEMP_CRITICAL
-        )
+        warning = config.CPU_TEMP_WARNING
+        critical = config.CPU_TEMP_CRITICAL
 
         if sensor.name == "NVMe":
 
-            warning = (
-                config.NVME_TEMP_WARNING
-            )
-
-            critical = (
-                config.NVME_TEMP_CRITICAL
-            )
+            warning = config.NVME_TEMP_WARNING
+            critical = config.NVME_TEMP_CRITICAL
 
         elif sensor.name == "RP1":
 
-            warning = (
-                config.RP1_TEMP_WARNING
-            )
-
-            critical = (
-                config.RP1_TEMP_CRITICAL
-            )
+            warning = config.RP1_TEMP_WARNING
+            critical = config.RP1_TEMP_CRITICAL
 
         color = temperature_color(
             sensor.temperature,
@@ -1006,9 +992,7 @@ def create_pihole_panel(
 
     table.add_row(
         "BLOCK",
-        (
-            f"{pihole.blocked_percentage:.1f}%"
-        ),
+        f"{pihole.blocked_percentage:.1f}%",
     )
 
     table.add_row(
@@ -1141,11 +1125,13 @@ def create_system_panel(
 ) -> Panel:
     """
     Panel informacji o systemie.
+
+    Dane pochodzą wyłącznie z DashboardState.
     """
 
     hostname = (
         system.hostname
-        or socket.gethostname()
+        or "Raspberry Pi"
     )
 
     table = Table(
@@ -1306,6 +1292,7 @@ def create_footer(
 # ==========================================================
 # GŁÓWNY LAYOUT
 # ==========================================================
+
 
 def create_dashboard_layout(
     state,

@@ -32,6 +32,7 @@ Interfejs:
     panels.py
 """
 
+
 from __future__ import annotations
 
 import sys
@@ -55,6 +56,7 @@ console = Console()
 # ==========================================================
 # INFORMACJA STARTOWA
 # ==========================================================
+
 
 def print_startup() -> None:
     """
@@ -88,6 +90,7 @@ def print_startup() -> None:
 # PANEL GŁÓWNY
 # ==========================================================
 
+
 def create_dashboard(state):
     """
     Tworzy kompletny interfejs dashboardu.
@@ -110,6 +113,7 @@ def create_dashboard(state):
 # GŁÓWNA PĘTLA
 # ==========================================================
 
+
 def run() -> None:
     """
     Uruchamia główną pętlę dashboardu.
@@ -124,14 +128,38 @@ def run() -> None:
     state = collector_manager.force_update()
 
     # ------------------------------------------------------
-    # Live
+    # LIVE
     # ------------------------------------------------------
 
     with Live(
         create_dashboard(state),
         console=console,
         screen=True,
-        refresh_per_second=4,
+
+        # --------------------------------------------------
+        # WAŻNE:
+        #
+        # Rich NIE odświeża się automatycznie.
+        #
+        # Odświeżeniem zarządza wyłącznie nasza pętla
+        # poprzez:
+        #
+        # live.update(..., refresh=True)
+        #
+        # Dzięki temu nie mamy jednocześnie:
+        #
+        # - automatycznego renderowania Rich,
+        # - ręcznego renderowania dashboardu.
+        # --------------------------------------------------
+
+        auto_refresh=False,
+
+        # Parametr pozostaje wymagany przez Rich,
+        # ale przy auto_refresh=False nie uruchamia
+        # automatycznego wątku odświeżającego.
+
+        refresh_per_second=1,
+
         transient=False,
     ) as live:
 
@@ -142,13 +170,13 @@ def run() -> None:
                 cycle_started = time.monotonic()
 
                 # ------------------------------------------
-                # Aktualizacja danych
+                # AKTUALIZACJA DANYCH
                 # ------------------------------------------
 
                 state = collector_manager.update()
 
                 # ------------------------------------------
-                # Renderowanie
+                # RENDEROWANIE
                 # ------------------------------------------
 
                 live.update(
@@ -159,7 +187,7 @@ def run() -> None:
                 )
 
                 # ------------------------------------------
-                # Stabilny interwał
+                # STABILNY INTERWAŁ
                 # ------------------------------------------
 
                 elapsed = (
@@ -185,6 +213,7 @@ def run() -> None:
 # ==========================================================
 # MAIN
 # ==========================================================
+
 
 def main() -> int:
     """
@@ -217,6 +246,7 @@ def main() -> int:
 # ==========================================================
 # ENTRY POINT
 # ==========================================================
+
 
 if __name__ == "__main__":
 
