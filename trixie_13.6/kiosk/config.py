@@ -99,6 +99,34 @@ LIVE_REFRESH = UI_REFRESH
 
 
 # ==========================================================
+# TERMINAL / RESPONSIVE UI
+# ==========================================================
+
+# Minimalna szerokość terminala używana przez dashboard.
+#
+# Rich pracuje w kolumnach znaków, dlatego wartości
+# dotyczą liczby kolumn terminala, a nie pikseli.
+
+DASHBOARD_MIN_WIDTH = 80
+
+# Minimalna wysokość terminala w wierszach.
+
+DASHBOARD_MIN_HEIGHT = 24
+
+# Automatyczne przełączanie układu dashboardu
+# zależnie od rozmiaru terminala.
+#
+# True:
+#   mały terminal  -> jedna kolumna
+#   większy terminal -> dwie kolumny
+#
+# False:
+#   zawsze dwie kolumny
+
+DASHBOARD_RESPONSIVE = True
+
+
+# ==========================================================
 # COLLECTOR INTERVALS
 # ==========================================================
 
