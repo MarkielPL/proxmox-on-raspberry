@@ -1,7 +1,5 @@
 """
-services/collector_manager.py
-
-Centralny menedżer collectorów.
+Centralny menedżer collectorów Raspberry Pi Kiosk Dashboard.
 
 Odpowiada za:
 
@@ -19,13 +17,26 @@ Manager NIE odpowiada za:
 - wygląd UI,
 - layout,
 - formatowanie prezentacji.
+
+Architektura:
+
+    collectors/
+        ↓
+    services/cache.py
+        ↓
+    CollectorManager
+        ↓
+    DashboardState
+        ↓
+    panels.py
+        ↓
+    dashboard.py
 """
 
 from __future__ import annotations
 
 import time
 import traceback
-from collections.abc import Callable
 
 import config
 
@@ -46,16 +57,8 @@ from services.cache import cache
 
 
 # ==========================================================
-# TYPE ALIAS
-# ==========================================================
-
-CollectorCallable = Callable[[], object]
-
-
-# ==========================================================
 # COLLECTOR MANAGER
 # ==========================================================
-
 
 class CollectorManager:
     """
@@ -69,7 +72,15 @@ class CollectorManager:
              ↓
         cache.needs_update()
              ↓
-        tylko potrzebne collectory
+        tylko collectory, których interwał minął
+
+    Manager:
+
+    - nie wykonuje logiki UI,
+    - nie zna Rich,
+    - nie zna layoutu,
+    - izoluje błędy collectorów,
+    - zachowuje ostatnie poprawne dane.
     """
 
     def __init__(
@@ -79,57 +90,9 @@ class CollectorManager:
 
         self.state = (
             state
-            or DashboardState()
+            if state is not None
+            else DashboardState()
         )
-
-        self._collectors: dict[
-            str,
-            tuple[
-                CollectorCallable,
-                Callable[[], float],
-            ],
-        ] = {
-            "cpu": (
-                cpu_collector.collect,
-                lambda: config.CPU_INTERVAL,
-            ),
-            "memory": (
-                memory_collector.collect,
-                lambda: config.RAM_INTERVAL,
-            ),
-            "network": (
-                network_collector.collect,
-                lambda: config.NETWORK_INTERVAL,
-            ),
-            "temperature": (
-                sensor_collector.collect,
-                lambda: config.TEMPERATURE_INTERVAL,
-            ),
-            "fan": (
-                fan_collector.collect,
-                lambda: config.FAN_INTERVAL,
-            ),
-            "storage": (
-                storage_collector.collect,
-                lambda: config.DISK_INTERVAL,
-            ),
-            "nvme": (
-                nvme_collector.collect,
-                lambda: config.NVME_INTERVAL,
-            ),
-            "system": (
-                system_collector.collect,
-                lambda: config.SYSTEM_INTERVAL,
-            ),
-            "proxmox": (
-                proxmox_collector.collect,
-                lambda: config.PROXMOX_INTERVAL,
-            ),
-            "pihole": (
-                pihole_collector.collect,
-                lambda: config.PIHOLE_INTERVAL,
-            ),
-        }
 
     # ======================================================
     # ERROR HANDLING
@@ -141,10 +104,13 @@ class CollectorManager:
         exception: Exception,
     ) -> None:
         """
-        Rejestruje błąd pojedynczego collectora.
+        Rejestruje błąd collectora.
 
-        Błąd jednego źródła danych nie może zatrzymać
-        całego dashboardu.
+        Błąd jednego źródła danych nie może
+        zatrzymać całego dashboardu.
+
+        Ostatnia poprawna wartość pozostaje
+        w cache i DashboardState.
         """
 
         error_message = (
@@ -154,15 +120,20 @@ class CollectorManager:
         )
 
         self.state.error_count += 1
+        self.state.last_error = error_message
 
-        self.state.last_error = (
-            error_message
-        )
+        # --------------------------------------------------
+        # Cache
+        # --------------------------------------------------
 
         cache.set_error(
             collector_name,
             error_message,
         )
+
+        # --------------------------------------------------
+        # Logowanie
+        # --------------------------------------------------
 
         if not getattr(
             config,
@@ -199,12 +170,12 @@ class CollectorManager:
                 log.write("\n")
 
         except OSError:
-            # Problem z logiem nie może
+            # Problem z logowaniem nie może
             # zatrzymać dashboardu.
             pass
 
     # ======================================================
-    # SHOULD UPDATE
+    # CACHE CHECK
     # ======================================================
 
     @staticmethod
@@ -213,7 +184,8 @@ class CollectorManager:
         interval: float,
     ) -> bool:
         """
-        Sprawdza centralny cache.
+        Sprawdza przez centralny cache,
+        czy collector powinien zostać wykonany.
         """
 
         return cache.needs_update(
@@ -222,42 +194,12 @@ class CollectorManager:
         )
 
     # ======================================================
-    # COLLECTOR ENABLED
-    # ======================================================
-
-    @staticmethod
-    def _collector_enabled(
-        name: str,
-    ) -> bool:
-        """
-        Sprawdza, czy collector powinien działać.
-
-        Integracje UI można wyłączyć przez config.py.
-        """
-
-        if name == "proxmox":
-            return getattr(
-                config,
-                "SHOW_PROXMOX_PANEL",
-                True,
-            )
-
-        if name == "pihole":
-            return getattr(
-                config,
-                "SHOW_PIHOLE_PANEL",
-                True,
-            )
-
-        return True
-
-    # ======================================================
-    # UPDATE CPU
+    # CPU
     # ======================================================
 
     def _update_cpu(self) -> None:
         """
-        Aktualizuje CPU.
+        Aktualizuje informacje o CPU.
         """
 
         name = "cpu"
@@ -291,16 +233,20 @@ class CollectorManager:
             )
 
     # ======================================================
-    # UPDATE MEMORY
+    # MEMORY
     # ======================================================
 
     def _update_memory(self) -> None:
         """
-        Aktualizuje RAM i SWAP.
+        Aktualizuje informacje o RAM oraz SWAP.
 
-        Aktualny MemoryInfo zawiera również
-        informacje o SWAP, dlatego collector
-        zwraca jeden obiekt MemoryInfo.
+        Aktualny MemoryInfo zawiera zarówno:
+
+        - RAM,
+        - SWAP.
+
+        Dlatego collector zwraca jeden obiekt
+        MemoryInfo.
         """
 
         name = "memory"
@@ -334,12 +280,12 @@ class CollectorManager:
             )
 
     # ======================================================
-    # UPDATE NETWORK
+    # NETWORK
     # ======================================================
 
     def _update_network(self) -> None:
         """
-        Aktualizuje sieć.
+        Aktualizuje informacje sieciowe.
         """
 
         name = "network"
@@ -373,12 +319,12 @@ class CollectorManager:
             )
 
     # ======================================================
-    # UPDATE TEMPERATURE
+    # TEMPERATURE
     # ======================================================
 
     def _update_temperature(self) -> None:
         """
-        Aktualizuje temperatury.
+        Aktualizuje wszystkie czujniki temperatury.
         """
 
         name = "temperature"
@@ -401,12 +347,11 @@ class CollectorManager:
 
             self.state.temperatures = info
 
-            # Synchronizacja temperatury CPU
-            # z modelem CPU.
-            if (
-                info.cpu > 0
-                and self.state.cpu is not None
-            ):
+            # --------------------------------------------------
+            # Synchronizacja temperatury CPU.
+            # --------------------------------------------------
+
+            if info.cpu > 0:
                 self.state.cpu.temperature = (
                     info.cpu
                 )
@@ -422,15 +367,15 @@ class CollectorManager:
             )
 
     # ======================================================
-    # UPDATE FAN
+    # FAN
     # ======================================================
 
     def _update_fan(self) -> None:
         """
-        Aktualizuje wentylator.
+        Aktualizuje informacje o wentylatorze.
 
-        WAŻNE:
-        Fan używa własnego FAN_INTERVAL.
+        Wentylator posiada własny interwał:
+        FAN_INTERVAL.
         """
 
         name = "fan"
@@ -464,12 +409,12 @@ class CollectorManager:
             )
 
     # ======================================================
-    # UPDATE STORAGE
+    # STORAGE
     # ======================================================
 
     def _update_storage(self) -> None:
         """
-        Aktualizuje systemy plików.
+        Aktualizuje informacje o systemach plików.
         """
 
         name = "storage"
@@ -503,12 +448,12 @@ class CollectorManager:
             )
 
     # ======================================================
-    # UPDATE NVME
+    # NVME
     # ======================================================
 
     def _update_nvme(self) -> None:
         """
-        Aktualizuje NVMe.
+        Aktualizuje informacje o NVMe.
         """
 
         name = "nvme"
@@ -542,12 +487,12 @@ class CollectorManager:
             )
 
     # ======================================================
-    # UPDATE SYSTEM
+    # SYSTEM
     # ======================================================
 
     def _update_system(self) -> None:
         """
-        Aktualizuje informacje systemowe.
+        Aktualizuje informacje o systemie.
         """
 
         name = "system"
@@ -581,17 +526,21 @@ class CollectorManager:
             )
 
     # ======================================================
-    # UPDATE PROXMOX
+    # PROXMOX
     # ======================================================
 
     def _update_proxmox(self) -> None:
         """
-        Aktualizuje Proxmox.
+        Aktualizuje informacje o Proxmox VE.
         """
 
         name = "proxmox"
 
-        if not self._collector_enabled(name):
+        if not getattr(
+            config,
+            "SHOW_PROXMOX_PANEL",
+            True,
+        ):
             return
 
         if not self._should_update(
@@ -623,17 +572,21 @@ class CollectorManager:
             )
 
     # ======================================================
-    # UPDATE PI-HOLE
+    # PI-HOLE
     # ======================================================
 
     def _update_pihole(self) -> None:
         """
-        Aktualizuje Pi-hole.
+        Aktualizuje informacje o Pi-hole.
         """
 
         name = "pihole"
 
-        if not self._collector_enabled(name):
+        if not getattr(
+            config,
+            "SHOW_PIHOLE_PANEL",
+            True,
+        ):
             return
 
         if not self._should_update(
@@ -673,21 +626,38 @@ class CollectorManager:
         Aktualizuje tylko te źródła danych,
         których interwał już minął.
 
-        Każdy collector ma niezależny harmonogram.
+        Każdy collector posiada niezależny
+        harmonogram.
         """
 
         now = time.monotonic()
+
+        # --------------------------------------------------
+        # Szybkie
+        # --------------------------------------------------
 
         self._update_cpu()
         self._update_memory()
         self._update_network()
 
+        # --------------------------------------------------
+        # Średnie
+        # --------------------------------------------------
+
         self._update_temperature()
         self._update_fan()
         self._update_system()
 
+        # --------------------------------------------------
+        # Wolniejsze
+        # --------------------------------------------------
+
         self._update_storage()
         self._update_nvme()
+
+        # --------------------------------------------------
+        # Usługi
+        # --------------------------------------------------
 
         self._update_proxmox()
         self._update_pihole()
@@ -704,9 +674,6 @@ class CollectorManager:
     def force_update(self) -> DashboardState:
         """
         Wymusza aktualizację wszystkich collectorów.
-
-        Czyszczenie cache powoduje, że każdy collector
-        zostanie potraktowany jako wymagający aktualizacji.
         """
 
         cache.clear()
@@ -715,7 +682,7 @@ class CollectorManager:
 
 
 # ==========================================================
-# GLOBAL MANAGER
+# GLOBAL INSTANCE
 # ==========================================================
 
 collector_manager = CollectorManager()
